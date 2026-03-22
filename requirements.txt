@@ -1,0 +1,13 @@
+# Computer Vision & Eye Tracking
+opencv-python>=4.8.0
+mediapipe>=0.10.0
+numpy>=1.24.0
+
+# macOS System Control
+pyobjc-core>=9.2
+pyobjc-framework-Quartz>=9.2
+pyobjc-framework-Cocoa>=9.2
+pyobjc-framework-ApplicationServices>=9.2
+
+# Utilities
+pyyaml>=6.0
