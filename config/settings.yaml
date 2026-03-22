@@ -3,42 +3,31 @@ camera:
   width: 1280
   height: 720
   fps: 30
-
 eye_tracking:
-  # MediaPipe FaceMesh 설정
   max_num_faces: 1
-  refine_landmarks: true        # 홍채 랜드마크 정밀 추적 활성화
+  refine_landmarks: true
   min_detection_confidence: 0.7
   min_tracking_confidence: 0.7
-
-  # 시선 → 화면 매핑 설정
-  smoothing_alpha: 0.2          # EMA 스무딩 (낮을수록 부드럽고 느림)
-  dead_zone_px: 4               # 이 픽셀 이하 이동은 무시 (떨림 방지)
-  gaze_scale_x: 2.5             # 수평 시선 민감도 (클수록 좌우로 더 많이 이동)
-  gaze_scale_y: 2.5             # 수직 시선 민감도 (클수록 상하로 더 많이 이동)
-
-  # 캘리브레이션
-  calibration_points: 5         # 캘리브레이션 포인트 수 (4모서리 + 중앙)
-  calibration_dwell_ms: 1500    # 각 포인트 응시 유지 시간 (ms)
-
+  smoothing_alpha: 0.2
+  dead_zone_px: 4
+  gaze_scale_x: 2.5
+  gaze_scale_y: 2.5
+  calibration_points: 5
+  calibration_dwell_ms: 1500
 hand_tracking:
   max_num_hands: 2
   min_detection_confidence: 0.6
   min_presence_confidence: 0.6
   min_tracking_confidence: 0.5
-
-  # 제스처 민감도
-  pinch_threshold: 0.35         # 핀치 판정 거리 (낮을수록 더 붙여야 인식)
-  scroll_sensitivity: 3500      # 스크롤 속도 (클수록 빠름)
-  inertia_trigger: 0.35         # 관성 발동 최소 속도 (높을수록 더 빠르게 움직여야 발동)
-  inertia_decay: 0.88           # 관성 감속 배율 (낮을수록 빨리 멈춤)
-  click_cooldown_ms: 600        # 클릭 간 최소 대기 시간 (ms)
-
+  pinch_threshold: 0.35
+  scroll_sensitivity: 3500
+  inertia_trigger: 0.35
+  inertia_decay: 0.88
+  click_cooldown_ms: 600
 screen:
-  width: 1512
-  height: 982
-
+  width: 1800
+  height: 1169
 debug:
-  show_landmarks: true          # 얼굴 랜드마크 시각화
-  show_gaze_vector: true        # 시선 벡터 표시
-  show_fps: true                # FPS 표시
+  show_landmarks: true
+  show_gaze_vector: true
+  show_fps: true
