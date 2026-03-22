@@ -658,6 +658,14 @@ def run_step2(debug: bool):
     print_goodbye()
 
 
+def run_step3(model: str):
+    from step3_voice_control import run as voice_run
+    print_banner()
+    print(f"{W}{BO}  Phase 3  —  Voice Control  (Whisper + Claude AI){NC}\n")
+    voice_run(model_size=model)
+    print_goodbye()
+
+
 # ── 진입점 ──────────────────────────────────────────────────────
 
 def main():
@@ -667,8 +675,11 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
         add_help=False,
     )
-    parser.add_argument("--step",     type=int, default=1, choices=[1, 2],
-                        help="실행할 Phase (1: 눈 트래킹  2: 손 제스처)")
+    parser.add_argument("--step",     type=int, default=1, choices=[1, 2, 3],
+                        help="실행할 Phase (1: 눈 트래킹  2: 손 제스처  3: 음성 제어)")
+    parser.add_argument("--model",    type=str, default="base",
+                        choices=["tiny", "base", "small", "medium"],
+                        help="Whisper 모델 크기 (Step 3 전용)")
     parser.add_argument("--no-mouse", action="store_true",
                         help="마우스 커서 이동 비활성화 (Step 1 전용)")
     parser.add_argument("--debug",    action="store_true",
@@ -685,12 +696,14 @@ def main():
         print_banner()
         print(f"""  {W}{BO}사용법{NC}
   {DG}┌──────────────────────────────────────────────────────────────────┐{NC}
-  {DG}│{NC}  {Y}./openpilot{NC}               Phase 1 실행 (눈 트래킹)             {DG}│{NC}
-  {DG}│{NC}  {Y}./openpilot --step 2{NC}      Phase 2 실행 (손 제스처 클릭/스크롤)  {DG}│{NC}
-  {DG}│{NC}  {Y}./openpilot --setup{NC}       macOS 권한 대화형 자동 설정 {R}← 처음 실행시{NC}  {DG}│{NC}
-  {DG}│{NC}  {Y}./openpilot --check{NC}       환경 및 권한 상태 확인               {DG}│{NC}
-  {DG}│{NC}  {Y}./openpilot --no-mouse{NC}    마우스 이동 없이 눈 추적만 확인       {DG}│{NC}
-  {DG}│{NC}  {Y}./openpilot --debug{NC}       랜드마크 시각화 포함                 {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot{NC}                    Phase 1 (눈 트래킹)               {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --step 2{NC}           Phase 2 (손 제스처 클릭/스크롤/줌) {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --step 3{NC}           Phase 3 (음성 Whisper + Claude AI) {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --step 3 --model small{NC}  더 정확한 Whisper 모델 사용   {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --setup{NC}            권한 자동 설정 {R}← 처음 실행시{NC}        {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --check{NC}            환경 및 권한 상태 확인             {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --no-mouse{NC}         마우스 이동 없이 눈 추적만 확인    {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --debug{NC}            랜드마크 시각화 포함               {DG}│{NC}
   {DG}└──────────────────────────────────────────────────────────────────┘{NC}
 """)
         return
@@ -705,6 +718,8 @@ def main():
 
     if args.step == 2:
         run_step2(debug=args.debug)
+    elif args.step == 3:
+        run_step3(model=args.model)
     else:
         run_step1(no_mouse=args.no_mouse, debug=args.debug)
 

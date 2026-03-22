@@ -11,3 +11,12 @@ pyobjc-framework-ApplicationServices>=9.2
 
 # Utilities
 pyyaml>=6.0
+
+# Phase 3 — Voice Control
+sounddevice>=0.4.6         # 마이크 오디오 캡처
+soundfile>=0.12.1          # 오디오 파일 I/O (faster-whisper 필요)
+faster-whisper>=1.0.0      # 빠른 Whisper STT (권장)
+# openai-whisper>=20231117 # 대안 STT (faster-whisper 없을 때)
+
+# Phase 3 — AI
+anthropic>=0.30.0          # Claude API
