@@ -11,6 +11,7 @@ pyobjc-framework-ApplicationServices>=9.2
 
 # Utilities
 pyyaml>=6.0
+Pillow>=10.0.0         # Korean/Unicode text rendering in OpenCV windows
 
 # Phase 3 — Voice Control
 sounddevice>=0.4.6         # 마이크 오디오 캡처
