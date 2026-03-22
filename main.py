@@ -590,7 +590,11 @@ def run_step1(no_mouse: bool, debug: bool):
                     hover_state.set(hovered)
 
         if show_debug and eye_data is not None:
-            frame = et.draw_debug(frame, eye_data)
+            gx = gaze_point.x if gaze_point else -1
+            gy = gaze_point.y if gaze_point else -1
+            frame = et.draw_debug(frame, eye_data,
+                                  gaze_x=gx, gaze_y=gy,
+                                  screen_w=screen_w, screen_h=screen_h)
 
         if ge.is_calibrating:
             cal_pt = ge.current_calibration_point

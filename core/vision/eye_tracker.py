@@ -58,6 +58,7 @@ class EyeData:
     avg_iris:           Tuple[float, float]
     left_gaze_offset:   Tuple[float, float]
     right_gaze_offset:  Tuple[float, float]
+    face_landmarks:     Optional[list] = None   # raw 478 landmarks (시각화용)
 
 
 class EyeTracker:
@@ -138,38 +139,140 @@ class EyeTracker:
             left_eye_openness=lo, right_eye_openness=ro,
             avg_iris=avg_iris,
             left_gaze_offset=lg, right_gaze_offset=rg,
+            face_landmarks=lms,
         )
 
-    def draw_debug(self, frame: np.ndarray, eye_data: Optional[EyeData]) -> np.ndarray:
+    def draw_debug(self, frame: np.ndarray, eye_data: Optional[EyeData],
+                   gaze_x: int = -1, gaze_y: int = -1,
+                   screen_w: int = 0, screen_h: int = 0) -> np.ndarray:
+        """
+        시선 추적 시각화
+
+        - 눈 윤곽선 (eye socket outline)
+        - 홍채 원 + 중심점
+        - 레티클 (눈 중심 기준 홍채 편차)
+        - 시선 방향 화살표
+        - 눈 개폐 게이지 (좌/우)
+        - gaze offset 수치
+        - 미니맵 (현재 시선이 화면 어디를 향하는지)
+        """
+        h, w = frame.shape[:2]
+
         if eye_data is None:
-            cv2.putText(frame, "얼굴 미감지", (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            cv2.putText(frame, "No face detected", (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (60, 60, 255), 2)
             return frame
 
-        h, w = frame.shape[:2]
-        def to_px(n): return (int(n[0]*w), int(n[1]*h))
+        def px(n):
+            return (int(n[0] * w), int(n[1] * h))
 
-        cv2.circle(frame, to_px(eye_data.left_iris),  5, (0, 255, 255), -1)
-        cv2.circle(frame, to_px(eye_data.right_iris), 5, (0, 255, 255), -1)
-        cv2.circle(frame, to_px(eye_data.left_eye_center),  3, (255, 0, 0), -1)
-        cv2.circle(frame, to_px(eye_data.right_eye_center), 3, (255, 0, 0), -1)
+        lms = eye_data.face_landmarks
 
-        cv2.putText(frame, f"L:{eye_data.left_eye_openness:.2f}", (10, 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-        cv2.putText(frame, f"R:{eye_data.right_eye_openness:.2f}", (10, 85),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        # ── 1. 눈 윤곽선 ───────────────────────────────────────
+        if lms:
+            for outline_idxs, color in [
+                (LEFT_EYE_OUTLINE,  (100, 220, 100)),   # 왼눈 초록
+                (RIGHT_EYE_OUTLINE, (100, 160, 255)),   # 오른눈 파랑
+            ]:
+                pts = [px(lms[i]) for i in outline_idxs]
+                for i in range(len(pts)):
+                    cv2.line(frame, pts[i], pts[(i+1) % len(pts)], color, 1, cv2.LINE_AA)
 
-        lc = to_px(eye_data.left_eye_center)
-        lo = eye_data.left_gaze_offset
-        cv2.arrowedLine(frame, lc,
-                        (lc[0]+int(lo[0]*20), lc[1]+int(lo[1]*20)),
-                        (0, 165, 255), 2, tipLength=0.4)
+        # ── 2. 홍채 원 ─────────────────────────────────────────
+        for iris, eye_center, color in [
+            (eye_data.left_iris,  eye_data.left_eye_center,  (0, 255, 180)),
+            (eye_data.right_iris, eye_data.right_eye_center, (0, 200, 255)),
+        ]:
+            iris_px   = px(iris)
+            center_px = px(eye_center)
 
-        rc = to_px(eye_data.right_eye_center)
-        ro = eye_data.right_gaze_offset
-        cv2.arrowedLine(frame, rc,
-                        (rc[0]+int(ro[0]*20), rc[1]+int(ro[1]*20)),
-                        (0, 165, 255), 2, tipLength=0.4)
+            # 눈 폭으로 홍채 반지름 추정
+            eye_w_norm = abs(iris[0] - eye_center[0]) * 4 + 0.02
+            iris_r = max(8, int(eye_w_norm * w * 1.5))
+            iris_r = min(iris_r, 22)   # 최대 22px
+
+            # 홍채 원 (반투명)
+            overlay = frame.copy()
+            cv2.circle(overlay, iris_px, iris_r, color, 1, cv2.LINE_AA)
+            cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+            # 홍채 중심점
+            cv2.circle(frame, iris_px, 3, color, -1, cv2.LINE_AA)
+
+            # 눈 중심 십자선
+            cv2.line(frame, (center_px[0]-8, center_px[1]),
+                     (center_px[0]+8, center_px[1]), (180, 180, 180), 1)
+            cv2.line(frame, (center_px[0], center_px[1]-8),
+                     (center_px[0], center_px[1]+8), (180, 180, 180), 1)
+
+        # ── 3. 레티클 — 눈 중심 기준 홍채 편차 ─────────────────
+        for iris, offset, gaze_color, label in [
+            (eye_data.left_iris,  eye_data.left_gaze_offset,  (0, 255, 180), "L"),
+            (eye_data.right_iris, eye_data.right_gaze_offset, (0, 200, 255), "R"),
+        ]:
+            iris_px = px(iris)
+            ox, oy  = offset
+
+            # 시선 방향 화살표 (오프셋 40배 증폭)
+            arrow_end = (iris_px[0] + int(ox * 40), iris_px[1] + int(oy * 40))
+            cv2.arrowedLine(frame, iris_px, arrow_end, gaze_color, 2,
+                            cv2.LINE_AA, tipLength=0.35)
+
+            # 오프셋 수치 텍스트
+            cv2.putText(frame, f"{label}({ox:+.2f},{oy:+.2f})",
+                        (iris_px[0] + 16, iris_px[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, gaze_color, 1)
+
+        # ── 4. 눈 개폐 게이지 (우측 세로 바) ───────────────────
+        bar_x = w - 28
+        for i, (openness, label, color) in enumerate([
+            (eye_data.left_eye_openness,  "L", (0, 255, 180)),
+            (eye_data.right_eye_openness, "R", (0, 200, 255)),
+        ]):
+            bx = bar_x + i * 18
+            by_top, by_bot = 50, 130
+            bar_h_filled = int((by_bot - by_top) * min(openness / 0.35, 1.0))
+
+            cv2.rectangle(frame, (bx, by_top), (bx+10, by_bot), (40, 40, 40), -1)
+            cv2.rectangle(frame, (bx, by_bot - bar_h_filled), (bx+10, by_bot),
+                          color, -1)
+            cv2.rectangle(frame, (bx, by_top), (bx+10, by_bot), (80, 80, 80), 1)
+            cv2.putText(frame, label, (bx, by_top - 6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, color, 1)
+            cv2.putText(frame, f"{openness:.2f}", (bx - 4, by_bot + 14),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.32, color, 1)
+
+        # ── 5. 미니맵 — 현재 시선 화면 위치 ────────────────────
+        if gaze_x >= 0 and screen_w > 0 and screen_h > 0:
+            MAP_W, MAP_H = 160, 100
+            MAP_X, MAP_Y = w - MAP_W - 8, h - MAP_H - 8
+
+            # 배경
+            overlay = frame.copy()
+            cv2.rectangle(overlay, (MAP_X, MAP_Y),
+                          (MAP_X + MAP_W, MAP_Y + MAP_H), (20, 20, 20), -1)
+            cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+            cv2.rectangle(frame, (MAP_X, MAP_Y),
+                          (MAP_X + MAP_W, MAP_Y + MAP_H), (80, 80, 80), 1)
+
+            # 격자선
+            for gx in [MAP_X + MAP_W//3, MAP_X + 2*MAP_W//3]:
+                cv2.line(frame, (gx, MAP_Y), (gx, MAP_Y+MAP_H), (50,50,50), 1)
+            for gy in [MAP_Y + MAP_H//3, MAP_Y + 2*MAP_H//3]:
+                cv2.line(frame, (MAP_X, gy), (MAP_X+MAP_W, gy), (50,50,50), 1)
+
+            # 시선 포인터
+            dot_x = MAP_X + int(gaze_x / screen_w * MAP_W)
+            dot_y = MAP_Y + int(gaze_y / screen_h * MAP_H)
+            dot_x = max(MAP_X + 4, min(MAP_X + MAP_W - 4, dot_x))
+            dot_y = max(MAP_Y + 4, min(MAP_Y + MAP_H - 4, dot_y))
+
+            cv2.circle(frame, (dot_x, dot_y), 6, (0, 220, 255), -1, cv2.LINE_AA)
+            cv2.circle(frame, (dot_x, dot_y), 6, (255, 255, 255), 1, cv2.LINE_AA)
+
+            cv2.putText(frame, "GAZE MAP", (MAP_X + 4, MAP_Y - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, (120, 120, 120), 1)
+
         return frame
 
     def close(self):

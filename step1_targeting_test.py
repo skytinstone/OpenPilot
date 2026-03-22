@@ -387,7 +387,7 @@ def main():
     blink_detector = BlinkResetDetector()
 
     # 상태 변수
-    show_debug = args.debug
+    show_debug = True   # eye tracking visualization ON by default (toggle with 'd')
     fps_counter = 0
     fps_start = time.time()
     current_fps = 0.0
@@ -452,9 +452,13 @@ def main():
 
         # ─── 화면 그리기 ───────────────────────────────────
 
-        # 디버그 시각화
+        # 디버그 시각화 (gaze 좌표 + 화면 크기 전달 → 미니맵 표시)
         if show_debug and eye_data is not None:
-            frame = eye_tracker.draw_debug(frame, eye_data)
+            gx = gaze_point.x if gaze_point else -1
+            gy = gaze_point.y if gaze_point else -1
+            frame = eye_tracker.draw_debug(frame, eye_data,
+                                           gaze_x=gx, gaze_y=gy,
+                                           screen_w=screen_w, screen_h=screen_h)
 
         # 캘리브레이션 화면
         if gaze_estimator.is_calibrating:
