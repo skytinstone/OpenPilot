@@ -189,7 +189,14 @@ class HandTracker:
         )
 
     def draw_debug(self, frame: np.ndarray, hand_data: Optional[HandData]) -> np.ndarray:
-        """랜드마크 + 제스처 시각화"""
+        """
+        손 뼈대 + 제스처 시각화
+
+        - 손가락별 고유 색상으로 뼈대(skeleton) 표시
+        - 관절(joint)은 크기로 구분: 손끝 > MCP > 기타
+        - 핀치 거리: 두 손가락 끝 사이 원형 시각화
+        - 제스처 이름을 손목 옆에 표시
+        """
         if hand_data is None:
             return frame
 
@@ -199,33 +206,134 @@ class HandTracker:
         def px(lm):
             return int(lm.x * w), int(lm.y * h)
 
-        # 손가락 연결선
-        CONNECTIONS = [
-            (0,1),(1,2),(2,3),(3,4),         # 엄지
-            (0,5),(5,6),(6,7),(7,8),          # 검지
-            (0,9),(9,10),(10,11),(11,12),     # 중지
-            (0,13),(13,14),(14,15),(15,16),   # 약지
-            (0,17),(17,18),(18,19),(19,20),   # 소지
-            (5,9),(9,13),(13,17),             # 손바닥
-        ]
-        gesture_colors = {
-            HandGesture.PALM:         (80, 220, 80),
-            HandGesture.PINCH_INDEX:  (80, 80, 255),
-            HandGesture.PINCH_MIDDLE: (255, 80, 80),
-            HandGesture.FIST:         (0, 165, 255),
+        # ── 손가락별 색상 (BGR) ───────────────────────────────
+        FINGER_COLORS = {
+            "thumb":  (0,   220, 255),  # 노랑  — 엄지
+            "index":  (80,  255, 80),   # 초록  — 검지
+            "middle": (255, 200, 0),    # 하늘  — 중지
+            "ring":   (255, 80,  200),  # 보라  — 약지
+            "pinky":  (80,  80,  255),  # 파랑  — 소지
+            "palm":   (160, 160, 160),  # 회색  — 손바닥
+        }
+
+        # ── 손가락별 연결선 정의 ──────────────────────────────
+        FINGER_BONES = {
+            "thumb":  [(0,1),(1,2),(2,3),(3,4)],
+            "index":  [(0,5),(5,6),(6,7),(7,8)],
+            "middle": [(0,9),(9,10),(10,11),(11,12)],
+            "ring":   [(0,13),(13,14),(14,15),(15,16)],
+            "pinky":  [(0,17),(17,18),(18,19),(19,20)],
+            "palm":   [(5,9),(9,13),(13,17),(0,17)],
+        }
+
+        # 손가락 끝 인덱스 (큰 원으로 표시)
+        FINGERTIPS = {4, 8, 12, 16, 20}
+        # MCP 관절 인덱스 (중간 원)
+        MCPS = {1, 5, 9, 13, 17}
+
+        # 관절 → 색상 매핑
+        LM_COLORS = {}
+        for finger, bones in FINGER_BONES.items():
+            color = FINGER_COLORS[finger]
+            for a, b in bones:
+                LM_COLORS[a] = color
+                LM_COLORS[b] = color
+
+        # ── 뼈대 그리기 ───────────────────────────────────────
+        for finger, bones in FINGER_BONES.items():
+            color = FINGER_COLORS[finger]
+            for a, b in bones:
+                cv2.line(frame, px(lms[a]), px(lms[b]), color, 2, cv2.LINE_AA)
+
+        # ── 관절 원 그리기 ────────────────────────────────────
+        for i, lm in enumerate(lms):
+            c = LM_COLORS.get(i, FINGER_COLORS["palm"])
+            p = px(lm)
+            if i in FINGERTIPS:
+                # 손끝: 큰 원 + 흰 테두리
+                cv2.circle(frame, p, 9, c, -1, cv2.LINE_AA)
+                cv2.circle(frame, p, 9, (255, 255, 255), 1, cv2.LINE_AA)
+            elif i in MCPS:
+                # MCP: 중간 원
+                cv2.circle(frame, p, 6, c, -1, cv2.LINE_AA)
+                cv2.circle(frame, p, 6, (200, 200, 200), 1, cv2.LINE_AA)
+            else:
+                # 나머지: 작은 원
+                cv2.circle(frame, p, 4, c, -1, cv2.LINE_AA)
+
+        # ── 핀치 거리 시각화 ─────────────────────────────────
+        PINCH_THRESH = 0.35
+        thumb_px = px(lms[THUMB_TIP])
+
+        # 엄지 ↔ 검지 (초록)
+        idx_px = px(lms[INDEX_TIP])
+        mid_pt_i = ((thumb_px[0]+idx_px[0])//2, (thumb_px[1]+idx_px[1])//2)
+        dist_i = hand_data.pinch_index_dist
+        pinch_i_color = (0, 255, 80) if dist_i < PINCH_THRESH else (80, 80, 80)
+        cv2.line(frame, thumb_px, idx_px, pinch_i_color, 1, cv2.LINE_AA)
+        radius_i = max(4, int(dist_i * 60))
+        cv2.circle(frame, mid_pt_i, radius_i, pinch_i_color, 1, cv2.LINE_AA)
+        cv2.putText(frame, f"L:{dist_i:.2f}", (mid_pt_i[0]+6, mid_pt_i[1]-6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, pinch_i_color, 1)
+
+        # 엄지 ↔ 중지 (빨강)
+        mid_px = px(lms[MIDDLE_TIP])
+        mid_pt_m = ((thumb_px[0]+mid_px[0])//2, (thumb_px[1]+mid_px[1])//2)
+        dist_m = hand_data.pinch_middle_dist
+        pinch_m_color = (0, 80, 255) if dist_m < PINCH_THRESH else (80, 80, 80)
+        cv2.line(frame, thumb_px, mid_px, pinch_m_color, 1, cv2.LINE_AA)
+        radius_m = max(4, int(dist_m * 60))
+        cv2.circle(frame, mid_pt_m, radius_m, pinch_m_color, 1, cv2.LINE_AA)
+        cv2.putText(frame, f"R:{dist_m:.2f}", (mid_pt_m[0]+6, mid_pt_m[1]+12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, pinch_m_color, 1)
+
+        # ── 제스처 이름 (손목 옆) ─────────────────────────────
+        GESTURE_LABELS = {
+            HandGesture.PALM:         "PALM",
+            HandGesture.PINCH_INDEX:  "LEFT CLICK",
+            HandGesture.PINCH_MIDDLE: "RIGHT CLICK",
+            HandGesture.FIST:         "SCROLL",
+            HandGesture.NONE:         "NONE",
+        }
+        GESTURE_BADGE_COLORS = {
+            HandGesture.PALM:         (80,  220, 80),
+            HandGesture.PINCH_INDEX:  (80,  80,  255),
+            HandGesture.PINCH_MIDDLE: (80,  80,  255),
+            HandGesture.FIST:         (0,   165, 255),
             HandGesture.NONE:         (120, 120, 120),
         }
-        color = gesture_colors.get(hand_data.gesture, (120, 120, 120))
+        g_label = GESTURE_LABELS.get(hand_data.gesture, "")
+        g_color = GESTURE_BADGE_COLORS.get(hand_data.gesture, (120, 120, 120))
+        wrist_px = px(lms[WRIST])
+        badge_pos = (wrist_px[0] - 10, wrist_px[1] + 24)
 
-        for a, b in CONNECTIONS:
-            cv2.line(frame, px(lms[a]), px(lms[b]), color, 2)
+        # 배지 배경
+        (tw, th), _ = cv2.getTextSize(g_label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        cv2.rectangle(frame,
+                      (badge_pos[0] - 4, badge_pos[1] - th - 4),
+                      (badge_pos[0] + tw + 4, badge_pos[1] + 4),
+                      (20, 20, 20), -1)
+        cv2.rectangle(frame,
+                      (badge_pos[0] - 4, badge_pos[1] - th - 4),
+                      (badge_pos[0] + tw + 4, badge_pos[1] + 4),
+                      g_color, 1)
+        cv2.putText(frame, g_label, badge_pos,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, g_color, 2, cv2.LINE_AA)
 
-        for lm in lms:
-            cv2.circle(frame, (int(lm.x * w), int(lm.y * h)), 4, color, -1)
-
-        # 엄지-검지 핀치 거리 표시
-        cv2.line(frame, px(lms[THUMB_TIP]), px(lms[INDEX_TIP]),  (80, 80, 255), 1)
-        cv2.line(frame, px(lms[THUMB_TIP]), px(lms[MIDDLE_TIP]), (255, 80, 80), 1)
+        # ── 범례 (우측 상단) ──────────────────────────────────
+        legend = [
+            ("Thumb",  FINGER_COLORS["thumb"]),
+            ("Index",  FINGER_COLORS["index"]),
+            ("Middle", FINGER_COLORS["middle"]),
+            ("Ring",   FINGER_COLORS["ring"]),
+            ("Pinky",  FINGER_COLORS["pinky"]),
+        ]
+        lx, ly = w - 110, 50
+        for name, color in legend:
+            cv2.circle(frame, (lx, ly), 5, color, -1)
+            cv2.putText(frame, name, (lx + 12, ly + 5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+            ly += 20
 
         return frame
 

@@ -128,7 +128,7 @@ def run(debug: bool = False):
     event_msg    = EventMessage(duration=0.6)
 
     prev_gesture = HandGesture.NONE
-    show_debug   = debug
+    show_debug   = True   # skeleton visualization ON by default (toggle with 'd')
 
     print("\n" + "=" * 52)
     print("  Open Pilot - Step 2  Hand Gesture Control")
