@@ -34,10 +34,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from config import load_config
 from core.vision.camera_capture import CameraCapture
-from core.vision.hand_tracker import HandTracker, HandGesture, HandData, THUMB_TIP, INDEX_TIP
+from core.vision.hand_tracker import HandTracker, HandGesture, HandData, THUMB_TIP, INDEX_TIP, PalmRubDetector
 from action.click_controller import ClickController
 from action.scroll_controller import ScrollController
 from action.zoom_controller import ZoomController
+from action import keyboard_controller as kbd
 from feedback.screen_overlay import ScreenBorderOverlayV2
 from feedback.gesture_status_overlay import GestureStatusOverlay
 
@@ -169,6 +170,7 @@ def run(debug: bool = False):
     click_ctrl   = ClickController(cooldown_ms=600)
     scroll_ctrl  = ScrollController()
     zoom_ctrl    = ZoomController()
+    rub_detector = PalmRubDetector()
     event_msg    = EventMessage()
 
     # ── 오버레이 (메인 스레드) ────────────────────────────────────
@@ -195,6 +197,7 @@ def run(debug: bool = False):
     print("  [Two hands]")
     print("  Both Pinch apart -> Zoom In")
     print("  Both Pinch close -> Zoom Out")
+    print("  Both Palm + Rub  -> Close Window  (Cmd+W)")
     print("  d                -> Toggle debug skeleton")
     print("  q / ESC          -> Quit")
     print("=" * 56)
@@ -244,8 +247,16 @@ def run(debug: bool = False):
                 zoom_ctrl.stop()
                 zoom_active = False
 
-        # ── 단일 손 제스처 (줌 중엔 비활성) ─────────────────
+        # ── 양손 Palm 문지르기 → 창 닫기 ────────────────────
         if not zoom_active:
+            if rub_detector.update(left, right):
+                kbd.press_keys(["cmd", "w"])
+                gesture_overlay.show("CLOSE WINDOW", "click", duration=1.0)
+                event_msg.set("CLOSE WINDOW")
+                print("[Step2] Palm rub → Cmd+W (close window)")
+
+        # ── 단일 손 제스처 (줌 중엔 비활성) ─────────────────
+        if not zoom_active and not rub_detector.is_active:
             for side, hand in [("Left", left), ("Right", right)]:
                 curr_g = curr[side]
                 prev_g = prev[side]
@@ -297,6 +308,20 @@ def run(debug: bool = False):
             (tw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
             cv2.putText(preview, msg, ((PREVIEW_W - tw) // 2, PREVIEW_H // 2),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (100, 100, 220), 1)
+
+        # rub 진행 바 (미리보기 하단)
+        if rub_detector.is_active and rub_detector.progress > 0:
+            bar_total = int(PREVIEW_W * 0.5)
+            bar_filled = int(bar_total * rub_detector.progress)
+            bar_x = (PREVIEW_W - bar_total) // 2
+            bar_y = PREVIEW_H - 22
+            cv2.rectangle(preview, (bar_x, bar_y),
+                          (bar_x + bar_total, bar_y + 6), (40, 40, 40), -1)
+            cv2.rectangle(preview, (bar_x, bar_y),
+                          (bar_x + bar_filled, bar_y + 6), (80, 200, 255), -1)
+            cv2.putText(preview, "RUB TO CLOSE",
+                        (bar_x, bar_y - 4),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (80, 200, 255), 1)
 
         # 이벤트 메시지 (미리보기 하단 중앙)
         ev = event_msg.get()

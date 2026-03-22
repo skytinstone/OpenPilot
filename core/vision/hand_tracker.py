@@ -7,10 +7,14 @@
   PINCH_MIDDLE— 엄지 + 중지 핀치 → 우클릭
   FIST        — 주먹 → 스크롤
   NONE        — 감지 없음
+
+특수 제스처 감지기:
+  PalmRubDetector — 양 손바닥을 맞댄 채 문지르기 → 창 닫기
 """
 import cv2
 import numpy as np
 import os
+import time
 import urllib.request
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -373,3 +377,111 @@ class HandTracker:
     def close(self):
         self._landmarker.close()
         print("[HandTracker] 종료됨")
+
+
+# ── PalmRubDetector ──────────────────────────────────────────────
+
+class PalmRubDetector:
+    """
+    양 손바닥을 서로 맞댄 채 좌우로 문지르는 제스처 감지.
+
+    조건:
+      1. 양손 모두 PALM 제스처
+      2. 두 손 중심 거리 < proximity_thresh (손이 가까이 붙어있음)
+      3. 상대 X 속도 방향이 rub_window 초 안에 rub_count 번 이상 바뀜
+
+    반환: update() 가 True 이면 제스처 완성 → Cmd+W 실행 권장
+
+    속성:
+      progress  — 완성까지 진행률 0.0~1.0 (시각화용)
+      is_active — 현재 손이 근접 + PALM 상태인지
+    """
+
+    def __init__(self,
+                 proximity_thresh: float = 0.38,   # 정규화 손 중심 거리
+                 rub_count: int = 4,                # 필요 방향 전환 횟수
+                 rub_window: float = 1.8,           # 감지 시간 창 (초)
+                 cooldown: float = 1.5):            # 트리거 후 쿨다운 (초)
+        self._prox       = proximity_thresh
+        self._rub_count  = rub_count
+        self._window     = rub_window
+        self._cooldown   = cooldown
+
+        self._prev_rel_x    : Optional[float] = None
+        self._prev_time     : Optional[float] = None
+        self._prev_dir      : int             = 0
+        self._changes       : List[float]     = []   # 방향 전환 타임스탬프
+        self._last_trigger  : float           = 0.0
+
+        self.progress  : float = 0.0   # 0~1 시각화용
+        self.is_active : bool  = False  # 손 근접 + PALM 여부
+
+    def update(self, left: Optional["HandData"],
+               right: Optional["HandData"]) -> bool:
+        """
+        매 프레임 호출. 제스처 완성 시 True 반환.
+        left / right: HandData 또는 None
+        """
+        now = time.time()
+
+        # 쿨다운
+        if now - self._last_trigger < self._cooldown:
+            self.is_active = False
+            return False
+
+        # 양손 PALM 체크
+        if (left is None or right is None
+                or left.gesture  != HandGesture.PALM
+                or right.gesture != HandGesture.PALM):
+            self._reset()
+            return False
+
+        # 근접 체크 (정규화 유클리드 거리)
+        lx, ly = left.hand_center
+        rx, ry = right.hand_center
+        dist = ((lx - rx) ** 2 + (ly - ry) ** 2) ** 0.5
+        if dist > self._prox:
+            self._reset()
+            return False
+
+        self.is_active = True
+
+        # 상대 X 위치 (왼손 - 오른손)
+        rel_x = lx - rx
+
+        if self._prev_rel_x is not None and self._prev_time is not None:
+            dt = now - self._prev_time
+            if dt > 0.01:
+                vel = (rel_x - self._prev_rel_x) / dt
+                # 속도 임계값 0.15/s 이상일 때만 방향 인정
+                direction = (1 if vel > 0.15 else -1 if vel < -0.15 else 0)
+
+                if direction != 0 and direction != self._prev_dir:
+                    self._changes.append(now)
+                    self._prev_dir = direction
+
+                # 시간 창 밖 항목 제거
+                cutoff = now - self._window
+                self._changes = [t for t in self._changes if t > cutoff]
+
+                self.progress = min(len(self._changes) / self._rub_count, 1.0)
+
+                if len(self._changes) >= self._rub_count:
+                    self._changes.clear()
+                    self._prev_dir    = 0
+                    self._last_trigger = now
+                    self.progress      = 0.0
+                    self.is_active     = False
+                    return True
+
+        self._prev_rel_x = rel_x
+        self._prev_time  = now
+        return False
+
+    def _reset(self):
+        self._prev_rel_x = None
+        self._prev_time  = None
+        self._prev_dir   = 0
+        self._changes    = []
+        self.progress    = 0.0
+        self.is_active   = False

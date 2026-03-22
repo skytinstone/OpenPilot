@@ -28,10 +28,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from config import load_config
 from core.vision.camera_capture import CameraCapture
-from core.vision.hand_tracker import HandTracker, HandGesture, HandData, THUMB_TIP, INDEX_TIP
+from core.vision.hand_tracker import HandTracker, HandGesture, HandData, THUMB_TIP, INDEX_TIP, PalmRubDetector
 from action.click_controller import ClickController
 from action.scroll_controller import ScrollController
 from action.zoom_controller import ZoomController
+from action import keyboard_controller as kbd
 
 
 # ── Gesture display ──────────────────────────────────────────────
@@ -178,6 +179,7 @@ def run(debug: bool = False):
     click_ctrl   = ClickController(cooldown_ms=600)
     scroll_ctrl  = ScrollController()
     zoom_ctrl    = ZoomController()
+    rub_detector = PalmRubDetector()
     event_msg    = EventMessage()
 
     # ── 좌/우 손 각각의 이전 제스처 상태 ──────────────────────────
@@ -197,6 +199,7 @@ def run(debug: bool = False):
     print("  [Two hands]")
     print("  Both Pinch apart -> Zoom In")
     print("  Both Pinch close -> Zoom Out")
+    print("  Both Palm + Rub  -> Close Window  (Cmd+W)")
     print("  d                -> Toggle debug skeleton")
     print("  q / ESC          -> Quit")
     print("=" * 56 + "\n")
@@ -242,8 +245,15 @@ def run(debug: bool = False):
                 zoom_ctrl.stop()
                 zoom_active = False
 
-        # ── 단일 손 제스처 처리 (줌 중엔 클릭/스크롤 비활성) ────────
+        # ── 양손 Palm 문지르기 → 창 닫기 ─────────────────────────
         if not zoom_active:
+            if rub_detector.update(left, right):
+                kbd.press_keys(["cmd", "w"])
+                event_msg.set("CLOSE WINDOW")
+                print("[Step2] Palm rub → Cmd+W (close window)")
+
+        # ── 단일 손 제스처 처리 (줌 중엔 클릭/스크롤 비활성) ────────
+        if not zoom_active and not rub_detector.is_active:
             for side, hand in [("Left", left), ("Right", right)]:
                 curr_g = curr[side]
                 prev_g = prev[side]
@@ -286,6 +296,19 @@ def run(debug: bool = False):
 
         if not hands:
             frame = draw_no_hand(frame, cam_w, cam_h)
+
+        # rub 진행 표시
+        if rub_detector.is_active and rub_detector.progress > 0:
+            bar_w = int(cam_w * 0.4 * rub_detector.progress)
+            bar_x = (cam_w - int(cam_w * 0.4)) // 2
+            bar_y = cam_h - 14
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + int(cam_w * 0.4), bar_y + 8),
+                          (40, 40, 40), -1)
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + 8),
+                          (80, 200, 255), -1)
+            cv2.putText(frame, "RUB TO CLOSE",
+                        (bar_x, bar_y - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                        (80, 200, 255), 1)
 
         frame = draw_hud(frame, left, right, zoom_active, zoom_delta,
                          event_msg.get(), cam_w, cam_h)
