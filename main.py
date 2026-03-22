@@ -648,6 +648,16 @@ def run_step1(no_mouse: bool, debug: bool):
     print_goodbye()
 
 
+# ── Step 1 Real Screen 실행 ──────────────────────────────────────
+
+def run_step1_real():
+    from step1_realscreen import run as realscreen_run
+    print_banner()
+    print(f"{W}{BO}  Phase 1  —  Eye Tracking  (Real Screen Mode){NC}\n")
+    realscreen_run()
+    print_goodbye()
+
+
 # ── Step 2 실행 ─────────────────────────────────────────────────
 
 def run_step2(debug: bool):
@@ -680,6 +690,8 @@ def main():
     parser.add_argument("--model",    type=str, default="base",
                         choices=["tiny", "base", "small", "medium"],
                         help="Whisper 모델 크기 (Step 3 전용)")
+    parser.add_argument("--real",     action="store_true",
+                        help="실제 화면 모드 — 시선 커서를 실제 화면에 오버레이 (Step 1 전용)")
     parser.add_argument("--no-mouse", action="store_true",
                         help="마우스 커서 이동 비활성화 (Step 1 전용)")
     parser.add_argument("--debug",    action="store_true",
@@ -696,7 +708,8 @@ def main():
         print_banner()
         print(f"""  {W}{BO}사용법{NC}
   {DG}┌──────────────────────────────────────────────────────────────────┐{NC}
-  {DG}│{NC}  {Y}./openpilot{NC}                    Phase 1 (눈 트래킹)               {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot{NC}                    Phase 1 (카메라 테스트 창)        {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --real{NC}             Phase 1 (실제 화면 오버레이 모드)  {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --step 2{NC}           Phase 2 (손 제스처 클릭/스크롤/줌) {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --step 3{NC}           Phase 3 (음성 Whisper + Claude AI) {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --step 3 --model small{NC}  더 정확한 Whisper 모델 사용   {DG}│{NC}
@@ -720,6 +733,8 @@ def main():
         run_step2(debug=args.debug)
     elif args.step == 3:
         run_step3(model=args.model)
+    elif args.real:
+        run_step1_real()
     else:
         run_step1(no_mouse=args.no_mouse, debug=args.debug)
 
