@@ -644,6 +644,16 @@ def run_step1(no_mouse: bool, debug: bool):
     print_goodbye()
 
 
+# ── Step 2 실행 ─────────────────────────────────────────────────
+
+def run_step2(debug: bool):
+    from step2_hand_control import run as hand_run
+    print_banner()
+    print(f"{W}{BO}  Phase 2  —  Hand Gesture Control{NC}\n")
+    hand_run(debug=debug)
+    print_goodbye()
+
+
 # ── 진입점 ──────────────────────────────────────────────────────
 
 def main():
@@ -653,10 +663,10 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
         add_help=False,
     )
-    parser.add_argument("--step",     type=int, default=1, choices=[1],
-                        help="실행할 Step (1: 눈 트래킹 타겟팅 테스트)")
+    parser.add_argument("--step",     type=int, default=1, choices=[1, 2],
+                        help="실행할 Phase (1: 눈 트래킹  2: 손 제스처)")
     parser.add_argument("--no-mouse", action="store_true",
-                        help="마우스 커서 이동 비활성화")
+                        help="마우스 커서 이동 비활성화 (Step 1 전용)")
     parser.add_argument("--debug",    action="store_true",
                         help="랜드마크 시각화 활성화")
     parser.add_argument("--check",    action="store_true",
@@ -671,7 +681,8 @@ def main():
         print_banner()
         print(f"""  {W}{BO}사용법{NC}
   {DG}┌──────────────────────────────────────────────────────────────────┐{NC}
-  {DG}│{NC}  {Y}./openpilot{NC}               기본 실행 (Step 1)                    {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot{NC}               Phase 1 실행 (눈 트래킹)             {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --step 2{NC}      Phase 2 실행 (손 제스처 클릭/스크롤)  {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --setup{NC}       macOS 권한 대화형 자동 설정 {R}← 처음 실행시{NC}  {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --check{NC}       환경 및 권한 상태 확인               {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --no-mouse{NC}    마우스 이동 없이 눈 추적만 확인       {DG}│{NC}
@@ -688,7 +699,10 @@ def main():
         run_check()
         return
 
-    run_step1(no_mouse=args.no_mouse, debug=args.debug)
+    if args.step == 2:
+        run_step2(debug=args.debug)
+    else:
+        run_step1(no_mouse=args.no_mouse, debug=args.debug)
 
 
 if __name__ == "__main__":
