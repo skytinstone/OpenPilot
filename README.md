@@ -1,35 +1,74 @@
-# Open Pilot
+<div align="center">
 
-**AI-Powered Hands-Free Computer Control**
+# ✈️ OpenPilot
 
-눈 추적(Eye Tracking)으로 마우스 커서를 제어하는 핸즈프리 컴퓨터 제어 플랫폼.
-현재 **Phase 1** — macOS 기반 시선 추적 커서 제어를 구현 중입니다.
+### Computer Pilot Agent — Control Your Computer with Eyes, Hands & Voice
+
+**by [Horcrux Technologies](https://github.com/skytinstone)**
 
 ---
 
-## 개요
+*마우스도, 키보드도 필요 없다.*
+*당신의 눈빛, 손짓, 목소리가 곧 인터페이스다.*
 
-| 항목 | 내용 |
+</div>
+
+---
+
+## What is OpenPilot?
+
+**OpenPilot**은 사람의 자연스러운 신체 신호만으로 컴퓨터를 완전히 제어하는 **Computer Pilot Agent**입니다.
+
+기존 마우스·키보드 중심의 인터페이스를 넘어, 눈(Eye) · 손(Hand) · 목소리(Voice) 세 가지 채널을 통해 운영체제와 애플리케이션을 자유롭게 조종할 수 있는 새로운 Human-Computer Interaction 패러다임을 목표로 합니다.
+
+> "The next interface is you."
+
+---
+
+## Vision & Roadmap
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     OpenPilot Roadmap                           │
+├──────────┬──────────────────────────────────┬───────────────────┤
+│  Phase   │  기능                             │  상태             │
+├──────────┼──────────────────────────────────┼───────────────────┤
+│  Phase 1 │  👁️  Eye Tracking Cursor Control  │  ✅ 개발 완료     │
+│  Phase 2 │  ✋  Hand Gesture Control         │  🔲 개발 예정     │
+│  Phase 3 │  🎙️  Voice Command Integration    │  🔲 개발 예정     │
+│  Phase 4 │  🤖  Unified Pilot Agent (AI)     │  🔲 개발 예정     │
+└──────────┴──────────────────────────────────┴───────────────────┘
+```
+
+### Phase 1 — Eye Tracking `✅ Current`
+웹캠 하나로 홍채를 추적해 마우스 커서를 제어합니다. 시선이 곧 포인터입니다.
+
+### Phase 2 — Hand Gesture *(Coming Soon)*
+카메라로 손 제스처를 인식해 클릭, 드래그, 스크롤 등 세밀한 조작을 지원합니다.
+
+### Phase 3 — Voice Command *(Coming Soon)*
+음성 명령으로 앱 실행, 텍스트 입력, 단축키 실행 등 고수준 제어를 수행합니다.
+
+### Phase 4 — Unified Pilot Agent *(Coming Soon)*
+Eye · Hand · Voice 세 채널을 AI가 통합 해석해 사용자 의도를 자동으로 판단하고 실행하는 완전 자율 에이전트를 구현합니다.
+
+---
+
+## Phase 1 — Eye Tracking Cursor Control
+
+> 현재 릴리즈: **v0.1.0** | 지원 플랫폼: **macOS**
+
+### 핵심 기술
+
+| 기술 | 역할 |
 |------|------|
-| 플랫폼 | macOS |
-| 언어 | Python 3.10+ |
-| 핵심 기술 | MediaPipe FaceMesh, OpenCV, pyobjc |
-| 현재 단계 | Phase 1 — 눈 추적 커서 제어 |
-| 버전 | v0.1.0 |
+| **MediaPipe FaceMesh** | 478개 얼굴 랜드마크 + 홍채 중심 좌표 추출 |
+| **EMA Smoothing** | 시선 떨림 제거 (지수 이동 평균) |
+| **5-Point Calibration** | 개인 시선 특성 보정으로 정확도 향상 |
+| **Dwell Detection** | 일정 시간 응시로 클릭 대체 |
+| **Quartz CGEvent** | macOS 네이티브 커서 제어 |
 
----
-
-## 로드맵
-
-```
-Phase 1  ✅  눈 추적 커서 제어 (macOS)
-Phase 2  🔲  클릭 / 제스처 인식
-Phase 3  🔲  음성 명령 통합
-```
-
----
-
-## 아키텍처
+### 아키텍처
 
 ```
 OpenPilot/
@@ -37,41 +76,39 @@ OpenPilot/
 ├── openpilot                    # 실행 스크립트
 ├── requirements.txt
 ├── config/
-│   └── settings.yaml            # 카메라·시선 추적·캘리브레이션 설정
+│   └── settings.yaml            # 카메라·시선·캘리브레이션 파라미터
 ├── core/
 │   └── vision/
 │       ├── camera_capture.py    # 카메라 프레임 캡처
-│       ├── eye_tracker.py       # MediaPipe FaceMesh 홍채 추적
-│       ├── gaze_estimator.py    # 홍채 오프셋 → 화면 좌표 변환 (EMA + 캘리브레이션)
+│       ├── eye_tracker.py       # MediaPipe 홍채 추적
+│       ├── gaze_estimator.py    # 시선 → 화면 좌표 변환
 │       └── hover_detector.py    # 시선 호버 감지 (Dwell Time)
 ├── action/
-│   └── mouse_controller.py      # macOS 커서 이동 (Quartz CGEvent)
-├── feedback/
-│   ├── screen_overlay.py        # 화면 테두리 오버레이 (NSWindow)
-│   └── hover_overlay.py         # 호버 피드백 오버레이
-└── step1_targeting_test.py      # Phase 1 카메라 뷰 HUD·타겟 그리드
+│   └── mouse_controller.py      # macOS 커서 이동 (Quartz)
+└── feedback/
+    ├── screen_overlay.py        # 화면 테두리 피드백 (NSWindow)
+    └── hover_overlay.py         # 호버 상태 피드백
 ```
 
 ### 데이터 흐름
 
 ```
-카메라 프레임
+웹캠 프레임
     │
     ▼
-EyeTracker (MediaPipe FaceMesh)
-    │  홍채 중심 좌표 (EyeData)
-    ▼
-GazeEstimator (EMA 스무딩 + 5포인트 캘리브레이션)
-    │  화면 좌표 (ScreenPoint)
-    ▼
-MouseController ──→ 커서 이동 (CGWarpMouseCursorPosition)
+EyeTracker — MediaPipe FaceMesh로 홍채 중심 좌표 추출
     │
-HoverDetector ──→ Dwell Time 감지 → HoverOverlay 피드백
+    ▼
+GazeEstimator — EMA 스무딩 + 캘리브레이션 보정 → 화면 좌표 변환
+    │
+    ├──▶  MouseController — CGWarpMouseCursorPosition으로 커서 이동
+    │
+    └──▶  HoverDetector — Dwell Time 감지 → 호버/클릭 피드백
 ```
 
 ---
 
-## 설치
+## 설치 (Phase 1)
 
 ### 요구사항
 
@@ -85,36 +122,31 @@ HoverDetector ──→ Dwell Time 감지 → HoverOverlay 피드백
 pip install -r requirements.txt
 ```
 
-requirements.txt에 포함된 패키지:
-
 | 패키지 | 용도 |
 |--------|------|
-| `opencv-python>=4.8.0` | 카메라 캡처 · 프레임 처리 |
-| `mediapipe>=0.10.0` | FaceMesh 478 랜드마크 (홍채 포함) |
-| `numpy>=1.24.0` | 좌표 계산 |
-| `pyobjc-framework-Quartz>=9.2` | 커서 이동 · 접근성 권한 확인 |
-| `pyobjc-framework-Cocoa>=9.2` | 화면 오버레이 (NSWindow) |
-| `pyobjc-framework-ApplicationServices>=9.2` | macOS 이벤트 |
-| `pyyaml>=6.0` | 설정 파일 로드 |
+| `opencv-python` | 카메라 캡처 · 프레임 처리 |
+| `mediapipe` | FaceMesh 478 랜드마크 (홍채 포함) |
+| `numpy` | 좌표 계산 |
+| `pyobjc-framework-Quartz` | 커서 이동 · 접근성 권한 확인 |
+| `pyobjc-framework-Cocoa` | 화면 오버레이 (NSWindow) |
+| `pyyaml` | 설정 파일 로드 |
 
 ---
 
-## 권한 설정 (최초 1회)
+## macOS 권한 설정 (최초 1회)
 
-Open Pilot은 두 가지 macOS 권한이 필요합니다.
+OpenPilot은 두 가지 macOS 권한이 필요합니다.
 
 | 권한 | 용도 |
 |------|------|
 | **접근성** | 커서 이동 (CGWarpMouseCursorPosition) |
-| **카메라** | 눈 추적 (FaceMesh) |
-
-자동 설정 (권장):
+| **카메라** | 홍채 추적 (MediaPipe FaceMesh) |
 
 ```bash
 ./openpilot --setup
 ```
 
-터미널 앱을 자동 감지하고 시스템 설정을 직접 열어 안내합니다.
+터미널 앱을 자동 감지하고 시스템 설정을 열어 단계별로 안내합니다.
 
 ---
 
@@ -127,7 +159,7 @@ Open Pilot은 두 가지 macOS 권한이 필요합니다.
 # 마우스 이동 없이 눈 추적만 확인
 ./openpilot --no-mouse
 
-# 랜드마크 시각화 포함 (디버그)
+# 랜드마크 시각화 포함 (디버그 모드)
 ./openpilot --debug
 
 # 환경 및 권한 상태 확인
@@ -141,13 +173,11 @@ Open Pilot은 두 가지 macOS 권한이 필요합니다.
 
 ## 조작키
 
-실행 중 카메라 창이 열리면 아래 키로 제어합니다.
-
 | 키 | 동작 |
 |----|------|
 | `c` | 캘리브레이션 시작 (5포인트) |
-| `m` | 마우스 제어 ON / OFF 토글 |
-| `d` | 랜드마크 시각화 ON / OFF 토글 |
+| `m` | 마우스 제어 ON / OFF |
+| `d` | 랜드마크 디버그 시각화 ON / OFF |
 | `r` | 캘리브레이션 리셋 |
 | `q` / `ESC` | 종료 |
 
@@ -155,13 +185,14 @@ Open Pilot은 두 가지 macOS 권한이 필요합니다.
 
 ## 캘리브레이션
 
-처음 실행 시 `c` 키를 눌러 5포인트 캘리브레이션을 진행하면 시선 정확도가 크게 향상됩니다.
+첫 실행 시 `c`를 눌러 5포인트 캘리브레이션을 진행하면 시선 정확도가 크게 향상됩니다.
 
-1. 화면에 순서대로 나타나는 포인트를 **1.5초 동안** 응시
-2. 4 모서리 + 중앙 총 5포인트 완료
-3. 이후 캘리브레이션 보정 매핑 자동 적용
+1. 화면에 포인트가 순서대로 나타남
+2. 각 포인트를 **1.5초 동안 응시**
+3. 4 모서리 + 중앙 총 5포인트 완료
+4. 개인 시선 오프셋 자동 보정 적용
 
-> 캘리브레이션 없이도 동작하나, 정확도가 낮을 수 있습니다.
+> 캘리브레이션 없이도 동작하나 정확도가 낮을 수 있습니다.
 
 ---
 
@@ -171,30 +202,25 @@ Open Pilot은 두 가지 macOS 권한이 필요합니다.
 
 ```yaml
 eye_tracking:
-  smoothing_alpha: 0.2      # EMA 스무딩 (낮을수록 부드럽고 느림)
-  dead_zone_px: 4           # 이 픽셀 이하 이동 무시 (떨림 방지)
-  gaze_scale_x: 1.6         # 수평 시선 민감도
-  gaze_scale_y: 1.6         # 수직 시선 민감도
-  calibration_dwell_ms: 1500  # 캘리브레이션 포인트 응시 유지 시간
+  smoothing_alpha: 0.2        # EMA 스무딩 (낮을수록 부드럽고 느림)
+  dead_zone_px: 4             # 이 픽셀 이하 이동 무시 (떨림 방지)
+  gaze_scale_x: 1.6           # 수평 시선 민감도
+  gaze_scale_y: 1.6           # 수직 시선 민감도
+  calibration_dwell_ms: 1500  # 캘리브레이션 포인트 응시 유지 시간 (ms)
 ```
 
 ---
 
-## 개발 환경
+## About
 
-```bash
-# 가상환경 생성 (권장)
-python -m venv .venv
-source .venv/bin/activate
+**Horcrux Technologies**는 신체 신호 기반의 차세대 Human-Computer Interaction을 연구·개발하는 회사입니다.
 
-pip install -r requirements.txt
-
-# 환경 체크
-./openpilot --check
-```
+OpenPilot은 신체적 제약 없이 누구나 컴퓨터를 자유롭게 사용할 수 있는 세상을 만들기 위한 첫 번째 프로젝트입니다.
 
 ---
 
-## 라이선스
+<div align="center">
 
-MIT License
+MIT License · © 2025 Horcrux Technologies
+
+</div>
