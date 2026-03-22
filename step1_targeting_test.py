@@ -155,11 +155,17 @@ def draw_blink_indicator(frame, detector: BlinkResetDetector, cam_w, cam_h):
     return frame
 
 
-def get_screen_size():
+def get_screen_size(config: dict = None):
+    # settings.yaml 에 저장된 값이 있으면 최우선 사용
+    if config:
+        scr = config.get("screen", {})
+        w, h = scr.get("width"), scr.get("height")
+        if w and h:
+            return int(w), int(h)
+    # 없으면 NSScreen 자동 감지
     try:
         from AppKit import NSScreen
-        screen = NSScreen.mainScreen()
-        frame = screen.frame()
+        frame = NSScreen.mainScreen().frame()
         return int(frame.size.width), int(frame.size.height)
     except Exception:
         return 1440, 900
@@ -337,8 +343,8 @@ def main():
     # 설정 로드
     config = load_config()
 
-    # 화면 크기
-    screen_w, screen_h = get_screen_size()
+    # 화면 크기 (settings.yaml 저장값 우선, 없으면 NSScreen 자동 감지)
+    screen_w, screen_h = get_screen_size(config)
     print(f"[Info] 화면 해상도: {screen_w}x{screen_h}")
 
     # 모듈 초기화

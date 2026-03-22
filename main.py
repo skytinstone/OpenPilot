@@ -328,6 +328,10 @@ def run_setup():
         print(f"  {DG}  건너뜀{NC}")
         results["microphone"] = None
 
+    # 4. 화면 해상도
+    print(f"\n  {DG}{'─'*44}{NC}")
+    _setup_screen()
+
     # ── 최종 결과 요약
     print(f"\n  {DG}{'─'*44}{NC}")
     print(f"  {W}{BO}설정 결과 요약{NC}\n")
@@ -357,6 +361,93 @@ def run_setup():
         print(f"  {DG}  다시 시도: {W}./openpilot --setup\n{NC}")
 
 
+# ── 화면 해상도 설정 ─────────────────────────────────────────────
+
+# MacBook/Mac 주요 프리셋 (논리 해상도 기준 — NSScreen 반환값과 동일 단위)
+_SCREEN_PRESETS = [
+    ("MacBook 14\"  기본 (1512×982)",   1512,  982),
+    ("MacBook 14\"  더 넓게 (1800×1169)", 1800, 1169),
+    ("MacBook 16\"  기본 (1728×1117)",   1728, 1117),
+    ("MacBook 16\"  더 넓게 (2056×1329)", 2056, 1329),
+    ("MacBook Air 13\"  기본 (1280×832)", 1280,  832),
+    ("MacBook Air 15\"  기본 (1440×932)", 1440,  932),
+    ("MacBook 13\"  기본 (1280×800)",    1280,  800),
+    ("iMac 24\"  기본 (2240×1260)",      2240, 1260),
+    ("직접 입력",                         0,     0),
+]
+
+
+def _detect_screen() -> tuple:
+    """NSScreen으로 현재 화면 논리 해상도 반환"""
+    try:
+        from AppKit import NSScreen
+        frame = NSScreen.mainScreen().frame()
+        return int(frame.size.width), int(frame.size.height)
+    except Exception:
+        return 0, 0
+
+
+def _setup_screen():
+    """대화형 화면 해상도 선택 → settings.yaml 저장"""
+    from config import load_config, save_config
+
+    print(f"\n  {W}{BO}화면 해상도 설정{NC}")
+    print(f"  {DG}시선과 커서의 좌표 매핑에 사용됩니다.{NC}\n")
+
+    # 자동 감지
+    detected_w, detected_h = _detect_screen()
+    if detected_w:
+        print(f"  {C}자동 감지된 해상도{NC}  →  {W}{BO}{detected_w} × {detected_h}{NC}")
+        if _ask_yn(f"  {Y}  이 해상도로 설정하시겠습니까? (y/n) ▶ {NC}"):
+            _write_screen_config(detected_w, detected_h)
+            return
+    else:
+        print(f"  {Y}⚠  자동 감지 실패 — 직접 선택해주세요.{NC}")
+
+    # 프리셋 목록
+    print(f"\n  {DG}[ 화면 프리셋 선택 ]{NC}\n")
+    for i, (label, w, h) in enumerate(_SCREEN_PRESETS):
+        suffix = f"  {DG}({w}×{h}){NC}" if w else ""
+        print(f"  {Y}{i + 1}{NC}. {label}{suffix}")
+
+    while True:
+        try:
+            ans = input(f"\n  {Y}번호를 입력하세요 ▶ {NC}").strip()
+            idx = int(ans) - 1
+            if not (0 <= idx < len(_SCREEN_PRESETS)):
+                raise ValueError
+            break
+        except (ValueError, EOFError):
+            print(f"  {R}  올바른 번호를 입력해주세요.{NC}")
+
+    label, w, h = _SCREEN_PRESETS[idx]
+
+    # 직접 입력
+    if w == 0:
+        while True:
+            try:
+                raw = input(f"  {Y}해상도 입력 (예: 1512 982) ▶ {NC}").strip().split()
+                w, h = int(raw[0]), int(raw[1])
+                if w > 0 and h > 0:
+                    break
+            except (ValueError, IndexError, EOFError):
+                pass
+            print(f"  {R}  올바른 형식으로 입력해주세요 (가로 세로).{NC}")
+
+    _write_screen_config(w, h)
+
+
+def _write_screen_config(w: int, h: int):
+    from config import load_config, save_config
+    config = load_config()
+    config.setdefault("screen", {})
+    config["screen"]["width"]  = w
+    config["screen"]["height"] = h
+    save_config(config)
+    print(f"\n  {G}✔{NC}  화면 해상도 저장 완료  →  {W}{BO}{w} × {h}{NC}")
+    print(f"  {DG}  settings.yaml 에 반영되었습니다.{NC}\n")
+
+
 # ── Step 1 실행 ─────────────────────────────────────────────────
 
 def run_step1(no_mouse: bool, debug: bool):
@@ -380,7 +471,7 @@ def run_step1(no_mouse: bool, debug: bool):
     print(f"  {DG}[ 모듈 초기화 중 ]{NC}\n")
 
     config     = loading_step("설정 파일 로드",       lambda: load_config() or True)
-    screen_w, screen_h = get_screen_size()
+    screen_w, screen_h = get_screen_size(config)
 
     camera = [None]
     def init_camera():
