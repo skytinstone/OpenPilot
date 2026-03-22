@@ -147,7 +147,7 @@ class HandTracker:
 
         options = mp_vision.HandLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=_MODEL_PATH),
-            num_hands=cfg.get("max_num_hands", 1),
+            num_hands=cfg.get("max_num_hands", 2),
             min_hand_detection_confidence=cfg.get("min_detection_confidence", 0.6),
             min_hand_presence_confidence=cfg.get("min_presence_confidence", 0.6),
             min_tracking_confidence=cfg.get("min_tracking_confidence", 0.5),
@@ -187,6 +187,39 @@ class HandTracker:
             pinch_middle_dist=d_mid,
             handedness=handedness,
         )
+
+    def process_multi(self, frame: np.ndarray) -> List[HandData]:
+        """
+        BGR 프레임 → 감지된 모든 손의 HandData 리스트 반환 (최대 2개)
+        각 HandData의 handedness 필드로 "Left" / "Right" 구분 가능
+        """
+        import mediapipe as mp
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        result = self._landmarker.detect(mp_image)
+
+        if not result.hand_landmarks:
+            return []
+
+        hands: List[HandData] = []
+        for i, lms in enumerate(result.hand_landmarks):
+            handedness = (
+                result.handedness[i][0].display_name
+                if result.handedness else "Right"
+            )
+            gesture, d_idx, d_mid = _classify_gesture(lms, handedness)
+            cx = (lms[WRIST].x + lms[MIDDLE_MCP].x) / 2
+            cy = (lms[WRIST].y + lms[MIDDLE_MCP].y) / 2
+            hands.append(HandData(
+                landmarks=lms,
+                gesture=gesture,
+                hand_center=(cx, cy),
+                pinch_index_dist=d_idx,
+                pinch_middle_dist=d_mid,
+                handedness=handedness,
+            ))
+        return hands
 
     def draw_debug(self, frame: np.ndarray, hand_data: Optional[HandData]) -> np.ndarray:
         """
