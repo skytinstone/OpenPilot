@@ -168,23 +168,23 @@ def run():
         if eye_data is not None:
             if gaze_estimator.is_calibrating:
                 cal_status = gaze_estimator.update_calibration(eye_data)
-                cal_pt     = gaze_estimator.current_calibration_point
-                if cal_pt:
-                    cal_overlay.show_point(
-                        cal_pt.screen_x, cal_pt.screen_y,
-                        cal_status["progress"],
-                        cal_status["current_idx"],
-                        cal_status["total"],
-                    )
+                # 현재 포인트 좌표를 status에 추가
+                cal_pt = gaze_estimator.current_calibration_point
+                val_pt = gaze_estimator.current_validation_point
+                if val_pt:
+                    cal_status["target_x"] = val_pt[0]
+                    cal_status["target_y"] = val_pt[1]
+                elif cal_pt:
+                    cal_status["target_x"] = cal_pt.screen_x
+                    cal_status["target_y"] = cal_pt.screen_y
+                cal_overlay.update_from_status(cal_status)
                 if cal_status["done"]:
                     cal_overlay.hide()
-                    print("[Calibration] 완료!")
             else:
                 gaze_point = gaze_estimator.estimate(eye_data)
                 if gaze_point:
                     if mouse_enabled and mouse:
                         mouse.move(gaze_point.x, gaze_point.y)
-                    # 실제 화면 위에 시선 커서 업데이트
                     gaze_cursor.update(gaze_point.x, gaze_point.y)
                 else:
                     gaze_cursor.hide_cursor()
@@ -217,8 +217,8 @@ def run():
         if key in (ord('q'), 27):
             break
         elif key == ord('c'):
-            gaze_estimator.start_calibration()
-            print("[Info] 캘리브레이션 시작 — 실제 화면에 포인트가 표시됩니다")
+            gaze_estimator.start_calibration(n_points=9)
+            print("[Info] 9-Point 캘리브레이션 시작 — 실제 화면에 포인트가 표시됩니다")
         elif key == ord('r'):
             gaze_estimator.reset()
             print("[Info] 스무딩 초기화")
