@@ -686,6 +686,14 @@ def run_step3(model: str):
     print_goodbye()
 
 
+def run_step3_real(model: str):
+    from step3_realscreen import run as voice_real_run
+    print_banner()
+    print(f"{W}{BO}  Phase 3  —  Voice Control  (Real Screen Mode){NC}\n")
+    voice_real_run(model_size=model)
+    print_goodbye()
+
+
 # ── 진입점 ──────────────────────────────────────────────────────
 
 def main():
@@ -701,7 +709,7 @@ def main():
                         choices=["tiny", "base", "small", "medium"],
                         help="Whisper 모델 크기 (Step 3 전용)")
     parser.add_argument("--real",     action="store_true",
-                        help="실제 화면 모드 — Step 1: 시선 커서 오버레이  Step 2: 제스처 토스트 오버레이")
+                        help="실제 화면 모드 — Step 1: 시선 커서  Step 2: 제스처 토스트  Step 3: 음성 오버레이")
     parser.add_argument("--no-mouse", action="store_true",
                         help="마우스 커서 이동 비활성화 (Step 1 전용)")
     parser.add_argument("--debug",    action="store_true",
@@ -722,8 +730,9 @@ def main():
   {DG}│{NC}  {Y}./openpilot --step 1 --real{NC}    Step 1 — 눈 트래킹 (실제 화면 모드)  {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --step 2{NC}           Step 2 — 손 제스처 (카메라 테스트)   {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --step 2 --real{NC}    Step 2 — 손 제스처 (실제 화면 모드)  {DG}│{NC}
-  {DG}│{NC}  {Y}./openpilot --step 3{NC}           Step 3 — 음성 제어 (Whisper + AI)    {DG}│{NC}
-  {DG}│{NC}  {Y}./openpilot --step 3 --model small{NC}  더 정확한 Whisper 모델          {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --step 3{NC}               Step 3 — 음성 제어 (카메라 창)      {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --step 3 --real{NC}        Step 3 — 음성 제어 (실제 화면 모드) {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --step 3 --model small{NC}  더 정확한 Whisper 모델           {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --setup{NC}            권한 자동 설정 {R}← 처음 실행시{NC}          {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --check{NC}            환경 및 권한 상태 확인               {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --no-mouse{NC}         마우스 이동 없이 눈 추적만 확인      {DG}│{NC}
@@ -751,7 +760,10 @@ def main():
         else:
             run_step2(debug=args.debug)
     elif args.step == 3:
-        run_step3(model=args.model)
+        if args.real:
+            run_step3_real(model=args.model)
+        else:
+            run_step3(model=args.model)
 
 
 if __name__ == "__main__":
