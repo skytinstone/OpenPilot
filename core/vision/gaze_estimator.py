@@ -47,10 +47,10 @@ VALIDATION_POSITIONS = [
 ]
 
 # 안정성 설정
-_STABILITY_WINDOW   = 12     # 최근 N 프레임으로 분산 계산
-_STABILITY_THRESH   = 0.0004 # 이 분산 미만이면 '안정' 판정
-_STABLE_SAMPLES_REQ = 30     # 포인트당 필요 안정 샘플 수
-_OUTLIER_STD        = 1.5    # 중앙값 기준 ±N*σ 밖 샘플 제거
+_STABILITY_WINDOW  = 12      # 최근 N 프레임으로 분산 계산
+_STABILITY_THRESH  = 0.0004  # 이 분산 미만이면 '안정' 판정
+_STABLE_DWELL_SEC  = 3.0     # 포인트당 필요 누적 안정 시간 (초)
+_OUTLIER_STD       = 1.5     # 중앙값 기준 ±N*σ 밖 샘플 제거
 
 # 저장 경로
 _CAL_SAVE_PATH = os.path.join(os.path.dirname(__file__),
@@ -155,13 +155,17 @@ class GazeEstimator:
         self._point_qualities:  List[float] = []
 
         # 캘리브레이션 진행 상태
-        self._calibrating      = False
-        self._phase            = CalibrationPhase.PREPARE
-        self._cal_points:      List[CalibrationPoint] = []
-        self._current_idx      = 0
-        self._phase_start      = 0.0
+        self._calibrating       = False
+        self._phase             = CalibrationPhase.PREPARE
+        self._cal_points:       List[CalibrationPoint] = []
+        self._current_idx       = 0
+        self._phase_start       = 0.0
         self._stability_buf: deque = deque(maxlen=_STABILITY_WINDOW)
-        self._n_points         = 9
+        self._n_points          = 9
+        # 3초 누적 안정 체류 추적
+        self._stable_accumulated = 0.0   # 누적 안정 시간 (초)
+        self._last_frame_time    = 0.0   # 이전 프레임 시각
+        self._confirm_time       = 0.0   # 포인트 확인 시각 (이펙트용)
 
         # 검증 상태
         self._val_points:  List[CalibrationPoint] = []
@@ -268,15 +272,17 @@ class GazeEstimator:
                 return self._status(done=True)
             return self._status(done=False)
 
-        # ── 포인트 완료 잠깐 표시 ────────────────────────────────
+        # ── 포인트 확인 이펙트 표시 (1.5초) ─────────────────────
         if self._phase == CalibrationPhase.DONE_PT:
-            if time.time() - self._phase_start >= 0.6:
+            if time.time() - self._phase_start >= 1.5:
                 self._current_idx += 1
                 if self._current_idx >= len(self._cal_points):
                     self._finish_calibration()
                     return self._status(done=False)
-                self._phase       = CalibrationPhase.AIMING
-                self._phase_start = time.time()
+                self._phase              = CalibrationPhase.AIMING
+                self._phase_start        = time.time()
+                self._stable_accumulated = 0.0
+                self._last_frame_time    = 0.0
                 self._stability_buf.clear()
             return self._status(done=False)
 
@@ -284,31 +290,35 @@ class GazeEstimator:
         self._stability_buf.append(go)
         is_stable = self._check_stability()
 
-        cp = self._cal_points[self._current_idx]
+        cp  = self._cal_points[self._current_idx]
+        now = time.time()
+        dt  = now - self._last_frame_time if self._last_frame_time > 0 else 0.0
+        dt  = min(dt, 0.1)   # 프레임 드롭 방지
+        self._last_frame_time = now
 
-        # AIMING → SAMPLING: 안정화되면 즉시 샘플링 시작
+        # AIMING → SAMPLING: 안정되면 진입
         if self._phase == CalibrationPhase.AIMING and is_stable:
             self._phase       = CalibrationPhase.SAMPLING
             self._phase_start = time.time()
 
-        # SAMPLING → AIMING: 불안정해지면 돌아감
-        if self._phase == CalibrationPhase.SAMPLING and not is_stable:
-            self._phase = CalibrationPhase.AIMING
-
-        # 안정 샘플 수집
+        # SAMPLING: 안정 시간 누적 (불안정해도 멈추기만 하고 리셋 안함)
         if self._phase == CalibrationPhase.SAMPLING:
+            if is_stable:
+                self._stable_accumulated += dt
             cp.stable_samples.append(go)
         cp.all_samples.append(go)
 
-        # 충분한 안정 샘플 수집 → 포인트 완료
-        if cp.stable_count >= _STABLE_SAMPLES_REQ:
+        # 3초 누적 달성 → 포인트 확인!
+        if (self._phase == CalibrationPhase.SAMPLING
+                and self._stable_accumulated >= _STABLE_DWELL_SEC):
             cp.quality = _compute_quality(cp.stable_samples)
             self._point_qualities.append(cp.quality)
+            self._confirm_time = now
             q_label = "★★★" if cp.quality > 0.7 else "★★" if cp.quality > 0.4 else "★"
-            print(f"[Calibration] 포인트 {self._current_idx+1}/{len(self._cal_points)} "
-                  f"완료 — 품질 {q_label} ({cp.quality:.2f})")
+            print(f"[Calibration] ✓ 포인트 {self._current_idx+1}/{len(self._cal_points)} "
+                  f"확인 — 품질 {q_label} ({cp.quality:.2f})")
             self._phase       = CalibrationPhase.DONE_PT
-            self._phase_start = time.time()
+            self._phase_start = now
 
         return self._status(done=False)
 
@@ -325,10 +335,9 @@ class GazeEstimator:
               else None)
         is_stable = (self._phase == CalibrationPhase.SAMPLING or
                      self._phase == CalibrationPhase.DONE_PT)
-        stable_count  = cp.stable_count if cp else 0
-        progress      = min(stable_count / _STABLE_SAMPLES_REQ, 1.0)
-        quality       = cp.quality if (cp and cp.quality > 0) else \
-                        (_compute_quality(cp.stable_samples) if cp and cp.stable_samples else 0.0)
+        progress  = min(self._stable_accumulated / _STABLE_DWELL_SEC, 1.0)
+        quality   = cp.quality if (cp and cp.quality > 0) else \
+                    (_compute_quality(cp.stable_samples) if cp and cp.stable_samples else 0.0)
 
         # validation phase인 경우 validation idx 사용
         cur_idx = (self._val_idx + len(self._cal_points)
@@ -340,13 +349,14 @@ class GazeEstimator:
             "done":            done,
             "current_idx":     cur_idx,
             "total":           len(self._cal_points),
-            "stable_count":    stable_count,
-            "stable_required": _STABLE_SAMPLES_REQ,
+            "stable_seconds":  self._stable_accumulated,
+            "stable_required": _STABLE_DWELL_SEC,
             "is_stable":       is_stable,
             "progress":        progress,
             "quality":         quality,
             "accuracy_px":     self._accuracy_px,
             "point_qualities": list(self._point_qualities),
+            "confirm_time":    self._confirm_time,
         }
 
     # ─── 검증 ────────────────────────────────────────────────────

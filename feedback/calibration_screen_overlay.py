@@ -22,15 +22,16 @@ class _CalData:
     phase:            str   = "prepare"
     target_x:         float = 0.5
     target_y:         float = 0.5
-    progress:         float = 0.0       # 0~1 (안정 샘플 진행률)
+    progress:         float = 0.0       # 0~1 (누적 안정 시간 비율)
     current_idx:      int   = 0
     total:            int   = 9
     is_stable:        bool  = False
-    stable_count:     int   = 0
-    stable_required:  int   = 30
+    stable_seconds:   float = 0.0       # 누적 안정 시간 (초)
+    stable_required:  float = 3.0       # 필요 안정 시간 (초)
     point_qualities:  List[float] = field(default_factory=list)
     accuracy_px:      float = -1.0
     is_validation:    bool  = False
+    confirm_time:     float = 0.0       # 포인트 확인 시각 (이펙트 애니메이션용)
 
 
 class _CalibrationState:
@@ -54,11 +55,12 @@ class _CalibrationState:
                 target_x=d.target_x, target_y=d.target_y,
                 progress=d.progress, current_idx=d.current_idx,
                 total=d.total, is_stable=d.is_stable,
-                stable_count=d.stable_count,
+                stable_seconds=d.stable_seconds,
                 stable_required=d.stable_required,
                 point_qualities=list(d.point_qualities),
                 accuracy_px=d.accuracy_px,
                 is_validation=d.is_validation,
+                confirm_time=d.confirm_time,
             )
 
 
@@ -191,11 +193,15 @@ def _make_cal_view_class(screen_w: int, screen_h: int):
                                dot_r * 2, dot_r * 2)
                 ).fill()
 
+                # ── done_pt: 체크마크 + 리플 + 플래시 ──────────────
+                if is_done:
+                    self._draw_done_effects(tx, ty, data, sw, sh)
+
                 # ── 안정 표시등 (포인트 위) ──────────────────────────
                 if not is_val and not is_done:
                     self._draw_stability_badge(
                         tx, ty + r_outer + 18,
-                        is_stable, data.stable_count, data.stable_required,
+                        is_stable, data.stable_seconds, data.stable_required,
                     )
 
                 # ── 하단 안내 텍스트 ────────────────────────────────
@@ -207,8 +213,8 @@ def _make_cal_view_class(screen_w: int, screen_h: int):
                     stars = "★★★" if q > 0.7 else "★★" if q > 0.4 else "★"
                     msg = f"Point {data.current_idx + 1} complete  {stars}"
                 elif is_stable:
-                    msg = (f"Collecting...  {data.stable_count} / "
-                           f"{data.stable_required}")
+                    msg = (f"Collecting...  {data.stable_seconds:.1f}s"
+                           f" / {data.stable_required:.0f}s")
                 else:
                     msg = (f"Point {data.current_idx + 1} / {data.total}"
                            f"  —  Gaze at the dot and hold still")
@@ -312,10 +318,98 @@ def _make_cal_view_class(screen_w: int, screen_h: int):
                     astr.drawAtPoint_(NSMakePoint((sw - ts.width) / 2, y))
                     y -= (size + 12)
 
+            # ── done_pt 이펙트: 체크마크 + 리플 + 플래시 ────────────
+
+            def _draw_done_effects(self, cx, cy, data: _CalData, sw, sh):
+                from AppKit import NSColor, NSBezierPath
+                from Foundation import NSMakeRect, NSMakePoint, NSAffineTransform
+
+                now      = time.time()
+                confirm  = data.confirm_time if data.confirm_time > 0 else now
+                elapsed  = now - confirm      # 확인 후 경과 시간 (초)
+
+                # ── 1) 녹색 플래시 (0~0.3초: 화면 전체 flash → fade) ──
+                if elapsed < 0.35:
+                    flash_alpha = 0.35 * (1.0 - elapsed / 0.35)
+                    NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                        0.15, 1.0, 0.45, flash_alpha
+                    ).set()
+                    NSBezierPath.fillRect_(NSMakeRect(0, 0, sw, sh))
+
+                # ── 2) 리플 링 (3개, 각각 0.15초 간격으로 시작) ───────
+                for i in range(3):
+                    t = elapsed - i * 0.15   # 이 링의 경과 시간
+                    if t < 0 or t > 0.9:
+                        continue
+                    frac       = t / 0.9     # 0 → 1
+                    ring_r     = 34 + frac * 80   # 반지름: 34 → 114px
+                    ring_alpha = 0.7 * (1.0 - frac)
+                    NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                        0.15, 1.0, 0.45, ring_alpha
+                    ).set()
+                    ring = NSBezierPath.bezierPathWithOvalInRect_(
+                        NSMakeRect(cx - ring_r, cy - ring_r,
+                                   ring_r * 2, ring_r * 2)
+                    )
+                    ring.setLineWidth_(2.5 * (1.0 - frac * 0.5))
+                    ring.stroke()
+
+                # ── 3) 체크마크 ✓ (스케일 스프링 애니메이션) ─────────
+                # 0~0.15초: 0→1.3 scale, 0.15~0.3초: 1.3→1.0, 이후 1.0 유지
+                if elapsed < 0.15:
+                    scale = elapsed / 0.15 * 1.3
+                elif elapsed < 0.35:
+                    scale = 1.3 - (elapsed - 0.15) / 0.2 * 0.3
+                else:
+                    scale = 1.0
+
+                if scale > 0.05:
+                    check_alpha = min(1.0, elapsed / 0.1)
+                    NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                        0.15, 1.0, 0.45, check_alpha
+                    ).set()
+
+                    # 체크마크 크기 (scale 적용)
+                    sz   = 22.0 * scale
+                    # ✓ 경로: 왼쪽 아래 → 중간 → 오른쪽 위
+                    path = NSBezierPath.bezierPath()
+                    path.moveToPoint_(NSMakePoint(cx - sz * 0.55, cy))
+                    path.lineToPoint_(NSMakePoint(cx - sz * 0.1,  cy - sz * 0.5))
+                    path.lineToPoint_(NSMakePoint(cx + sz * 0.6,  cy + sz * 0.55))
+                    path.setLineWidth_(3.5 * scale)
+                    path.setLineCapStyle_(1)   # NSRoundLineCapStyle
+                    path.setLineJoinStyle_(1)  # NSRoundLineJoinStyle
+                    path.stroke()
+
+                # ── 4) 품질 별 배지 ──────────────────────────────────
+                if elapsed > 0.2 and data.point_qualities:
+                    q     = data.point_qualities[-1]
+                    stars = "★★★" if q > 0.7 else "★★" if q > 0.4 else "★"
+                    badge_alpha = min(1.0, (elapsed - 0.2) / 0.2)
+                    from AppKit import (
+                        NSFont, NSString, NSAttributedString,
+                        NSForegroundColorAttributeName, NSFontAttributeName,
+                    )
+                    sc_r = 1.0 if q <= 0.4 else (1.0 if q <= 0.7 else 1.0)
+                    sc_g = 0.3 if q <= 0.4 else (0.85 if q <= 0.7 else 1.0)
+                    sc_b = 0.2 if q <= 0.4 else (0.2 if q <= 0.7 else 0.3)
+
+                    font  = NSFont.boldSystemFontOfSize_(20.0)
+                    ns    = NSString.stringWithString_(stars)
+                    attrs = {
+                        NSFontAttributeName: font,
+                        NSForegroundColorAttributeName:
+                            NSColor.colorWithCalibratedRed_green_blue_alpha_(
+                                sc_r, sc_g, sc_b, badge_alpha),
+                    }
+                    astr = NSAttributedString.alloc().initWithString_attributes_(ns, attrs)
+                    ts   = astr.size()
+                    astr.drawAtPoint_(NSMakePoint(cx - ts.width / 2, cy + 40))
+
             # ── 안정 배지 ────────────────────────────────────────────
 
             def _draw_stability_badge(self, cx, cy,
-                                       is_stable, count, required):
+                                       is_stable, stable_secs, required_secs):
                 from AppKit import (
                     NSColor, NSBezierPath, NSFont, NSString,
                     NSAttributedString,
@@ -323,10 +417,13 @@ def _make_cal_view_class(screen_w: int, screen_h: int):
                 )
                 from Foundation import NSMakeRect, NSMakePoint
 
-                label = f"STABLE  {count}/{required}" if is_stable \
-                        else "Hold still..."
-                r, g, b = (0.15, 1.0, 0.45) if is_stable else (0.8, 0.8, 0.8)
-                alpha   = 0.95
+                if is_stable:
+                    label = f"STABLE  {stable_secs:.1f}s / {required_secs:.0f}s"
+                    r, g, b = 0.15, 1.0, 0.45
+                else:
+                    label = "Hold still..."
+                    r, g, b = 0.8, 0.8, 0.8
+                alpha = 0.95
 
                 font  = NSFont.boldSystemFontOfSize_(12.0)
                 ns    = NSString.stringWithString_(label)
@@ -481,11 +578,12 @@ class CalibrationScreenOverlay:
             current_idx     = idx,
             total           = total,
             is_stable       = status.get("is_stable", False),
-            stable_count    = status.get("stable_count", 0),
-            stable_required = status.get("stable_required", 30),
+            stable_seconds  = status.get("stable_seconds", 0.0),
+            stable_required = status.get("stable_required", 3.0),
             point_qualities = status.get("point_qualities", []),
             accuracy_px     = status.get("accuracy_px", -1.0),
             is_validation   = is_val,
+            confirm_time    = status.get("confirm_time", 0.0),
         )
         _cal_state.update(data)
         if self._window and self._active:
