@@ -164,6 +164,8 @@ class EyeTracker:
             return frame
 
         def px(n):
+            if hasattr(n, 'x'):
+                return (int(n.x * w), int(n.y * h))
             return (int(n[0] * w), int(n[1] * h))
 
         lms = eye_data.face_landmarks
