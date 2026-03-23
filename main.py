@@ -694,6 +694,14 @@ def run_step3_real(model: str):
     print_goodbye()
 
 
+def run_step4(model: str, no_voice: bool):
+    from step4_unified import run as unified_run
+    print_banner()
+    print(f"{W}{BO}  Phase 4  —  Unified Pilot Agent  (Eye + Hand + Voice){NC}\n")
+    unified_run(model_size=model, voice_enabled=not no_voice)
+    print_goodbye()
+
+
 # ── 진입점 ──────────────────────────────────────────────────────
 
 def main():
@@ -703,8 +711,8 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
         add_help=False,
     )
-    parser.add_argument("--step",     type=int, default=1, choices=[1, 2, 3],
-                        help="실행할 Phase (1: 눈 트래킹  2: 손 제스처  3: 음성 제어)")
+    parser.add_argument("--step",     type=int, default=1, choices=[1, 2, 3, 4],
+                        help="실행할 Phase (1: 눈  2: 손  3: 음성  4: 통합)")
     parser.add_argument("--model",    type=str, default="base",
                         choices=["tiny", "base", "small", "medium"],
                         help="Whisper 모델 크기 (Step 3 전용)")
@@ -733,6 +741,8 @@ def main():
   {DG}│{NC}  {Y}./openpilot --step 3{NC}               Step 3 — 음성 제어 (카메라 창)      {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --step 3 --real{NC}        Step 3 — 음성 제어 (실제 화면 모드) {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --step 3 --model small{NC}  더 정확한 Whisper 모델           {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --step 4{NC}               Step 4 — 통합 (눈+손+음성 동시)    {DG}│{NC}
+  {DG}│{NC}  {Y}./openpilot --step 4 --no-mouse{NC}    Step 4 — 음성 없이 눈+손만         {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --setup{NC}            권한 자동 설정 {R}← 처음 실행시{NC}          {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --check{NC}            환경 및 권한 상태 확인               {DG}│{NC}
   {DG}│{NC}  {Y}./openpilot --no-mouse{NC}         마우스 이동 없이 눈 추적만 확인      {DG}│{NC}
@@ -764,6 +774,8 @@ def main():
             run_step3_real(model=args.model)
         else:
             run_step3(model=args.model)
+    elif args.step == 4:
+        run_step4(model=args.model, no_voice=args.no_mouse)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ eye_tracking:
   smoothing_alpha: 0.2
   dead_zone_px: 4
   gaze_scale_x: 2.5
-  gaze_scale_y: 2.5
+  gaze_scale_y: -2.5          # 음수 = Y축 반전 (아래 눈꺼풀 가림 현상 보정)
   calibration_points: 5
   calibration_dwell_ms: 1500
 hand_tracking:
