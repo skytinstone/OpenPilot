@@ -20,4 +20,5 @@ faster-whisper>=1.0.0      # 빠른 Whisper STT (권장)
 # openai-whisper>=20231117 # 대안 STT (faster-whisper 없을 때)
 
 # Phase 3 — AI
-anthropic>=0.30.0          # Claude API
+anthropic>=0.30.0          # Claude API (선택)
+google-generativeai>=0.8.0 # Gemini API (SMART 모드 — 권장)

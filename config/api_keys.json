@@ -1,0 +1,5 @@
+{
+  "gemini": "AIzaSyD4wZozMSCcuNCJtGwBFYnmzOts_v8m7gY",
+  "anthropic": "",
+  "_comment": "API 키를 여기에 입력하거나, python main.py --setup 으로 설정하세요."
+}

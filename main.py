@@ -328,7 +328,27 @@ def run_setup():
         print(f"  {DG}  건너뜀{NC}")
         results["microphone"] = None
 
-    # 4. 화면 해상도
+    # 4. AI API 키 설정
+    print(f"\n  {DG}{'─'*44}{NC}")
+    print(f"\n  {W}{BO}  AI 음성 명령 설정 (SMART 모드){NC}")
+    print(f"  {DG}  Gemini API 키가 있으면 자연어로 PC를 제어할 수 있습니다.{NC}")
+    print(f"  {DG}  무료 발급: https://aistudio.google.com/apikey{NC}\n")
+
+    if _ask_yn(f"  {Y}  Gemini API 키를 설정하시겠습니까? (y/n) ▶ {NC}"):
+        api_key = input(f"  {C}  API 키 입력 ▶ {NC}").strip()
+        if api_key:
+            try:
+                from core.ai.gemini_agent import save_api_key
+                save_api_key("gemini", api_key)
+                print_step("", "Gemini API 키 저장 완료", "ok")
+            except Exception as e:
+                print(f"  {R}  저장 실패: {e}{NC}")
+        else:
+            print(f"  {DG}  빈 값 — 건너뜀{NC}")
+    else:
+        print(f"  {DG}  건너뜀 (나중에 설정 가능){NC}")
+
+    # 5. 화면 해상도
     print(f"\n  {DG}{'─'*44}{NC}")
     _setup_screen()
 

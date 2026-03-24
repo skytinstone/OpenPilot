@@ -18,8 +18,10 @@ Step 4 — Unified Pilot Agent
 """
 import cv2
 import numpy as np
+import subprocess
 import time
 import threading
+import signal
 import sys
 import os
 from typing import Optional, List
@@ -39,6 +41,9 @@ from action.click_controller import ClickController
 from action.scroll_controller import ScrollController
 from action.zoom_controller import ZoomController
 from action import keyboard_controller as kbd
+from action.system_controller import execute_system_command
+from core.ai.local_command_parser import parse_voice_command
+from core.ai.gemini_agent import GeminiAgent, is_available as gemini_available
 from feedback.screen_overlay import ScreenBorderOverlayV2
 from feedback.gesture_status_overlay import GestureStatusOverlay
 from feedback.voice_overlay import VoiceOverlay
@@ -57,12 +62,17 @@ try:
 except ImportError:
     _AI_AVAILABLE = False
 
+# Gemini AI 에이전트
+_gemini_ok = gemini_available()
+if _gemini_ok:
+    print("[GeminiAgent] ✨ Gemini API 감지 — SMART 음성 모드 사용 가능")
+
 # ── 상수 ──────────────────────────────────────────────────────────
 PREVIEW_W = 480
 PREVIEW_H = 270
 
 MODE_DICTATE = "DICTATE"
-MODE_AI_CMD  = "AI CMD"
+MODE_SMART   = "SMART"       # 로컬 매칭 → OpenClaw/Gemini 3 폴백
 
 DEBUG_EYE  = "eye"
 DEBUG_HAND = "hand"
@@ -100,7 +110,7 @@ GESTURE_COLORS = {
 }
 MODE_COLORS_CV = {
     MODE_DICTATE: (80, 220, 80),
-    MODE_AI_CMD:  (0,  200, 255),
+    MODE_SMART:   (200, 80, 255),
 }
 
 
@@ -176,10 +186,10 @@ def draw_hud(frame, eye_detected: bool, mouse_on: bool, is_calibrated: bool,
 # ── 음성 변환 워커 ────────────────────────────────────────────────
 
 class _TranscribeWorker(threading.Thread):
-    def __init__(self, audio, transcriber, mode, ai_processor, event_log, on_done):
+    def __init__(self, audio, transcriber, mode, gemini_agent, event_log, on_done):
         super().__init__(daemon=True)
         self._audio, self._tr = audio, transcriber
-        self._mode, self._ai = mode, ai_processor
+        self._mode, self._gemini = mode, gemini_agent
         self._log, self._on_done = event_log, on_done
 
     def run(self):
@@ -193,18 +203,65 @@ class _TranscribeWorker(threading.Thread):
             self._on_done("", "Nothing heard.")
             return
         print(f"[Whisper] {text}")
+
         if self._mode == MODE_DICTATE:
+            # ── DICTATE: 그대로 텍스트 입력 ──────────────────
             kbd.type_text(text)
             self._log.append(f"Typed: {text[:40]}")
             self._on_done(text, "Done.")
-        elif self._mode == MODE_AI_CMD and self._ai:
-            self._on_done(text, "AI processing...")
-            try:
-                action = self._ai.process(text)
+
+        elif self._mode == MODE_SMART:
+            # ── SMART: 로컬 매칭 → Gemini 3 폴백 ────────────
+            action = parse_voice_command(text)
+            if action:
+                # 1단계: 로컬 키워드 매칭 성공 → 즉시 실행
+                print(f"[SMART] ⚡ 로컬 매칭: {action}")
                 self._run_action(action)
-                self._on_done(text, f"Done: {action.get('action','?')}")
-            except Exception as e:
-                self._on_done(text, f"AI error: {e}")
+                self._log.append(f"LOCAL: {action.get('action','?')}")
+                self._on_done(text, f"⚡ {action.get('action','?')}")
+            elif self._gemini:
+                # 2단계: Gemini 3 AI 에이전트로 자연어 처리
+                print(f"[SMART] 로컬 매칭 실패 → ✨ Gemini 3: {text}")
+                self._on_done(text, "✨ Gemini 3 처리 중...")
+                try:
+                    action = self._gemini.process(text)
+                    act_type = action.get("action", "say")
+                    print(f"[SMART/Gemini3] 액션: {action}")
+
+                    if act_type == "say":
+                        # 응답만 표시 (실행 없음)
+                        msg = action.get("text", "")[:60]
+                        print(f"[Gemini3] 💬 {msg}")
+                        self._log.append(f"✨ {msg}")
+                        self._on_done(text, f"💬 {msg}")
+                    elif act_type == "shell":
+                        # 셸 명령 실행
+                        cmd = action.get("command", "")
+                        print(f"[Gemini3] 🖥 shell: {cmd}")
+                        try:
+                            r = subprocess.run(
+                                cmd, shell=True, capture_output=True,
+                                text=True, timeout=10
+                            )
+                            output = r.stdout.strip()[:60] or "Done"
+                            self._log.append(f"✨ shell: {cmd[:30]}")
+                            self._on_done(text, f"✨ {output}")
+                        except Exception as e:
+                            self._on_done(text, f"shell 실패: {e}")
+                    else:
+                        # open / shortcut / type / scroll / system
+                        self._run_action(action)
+                        self._log.append(f"✨ {act_type}")
+                        self._on_done(text, f"✨ {act_type}")
+                except Exception as e:
+                    print(f"[SMART/Gemini3] 오류: {e}")
+                    self._on_done(text, f"AI 오류: {e}")
+            else:
+                # Gemini 미설정 시 텍스트 입력으로 폴백
+                print(f"[SMART] 매칭 실패 + Gemini 없음 → 텍스트 입력")
+                kbd.type_text(text)
+                self._log.append(f"Typed: {text[:40]}")
+                self._on_done(text, "No match → typed.")
         else:
             kbd.type_text(text)
             self._log.append(f"Typed: {text[:40]}")
@@ -222,7 +279,59 @@ class _TranscribeWorker(threading.Thread):
             from action.scroll_controller import _do_scroll
             d = action.get("direction", "down")
             _do_scroll(80 * int(action.get("amount", 3)) * (1 if d == "up" else -1))
+        elif act == "system":
+            execute_system_command(action.get("command", ""))
+        elif act == "say":
+            pass  # 응답만 표시
         self._log.append(f"{act}: {list(action.values())[1] if len(action) > 1 else ''}")
+
+
+# ── 손 스켈레톤 간이 표시 (디버그 OFF 시) ──────────────────────────
+
+_HAND_CONNECTIONS = [
+    (0,1),(1,2),(2,3),(3,4),        # 엄지
+    (0,5),(5,6),(6,7),(7,8),        # 검지
+    (0,9),(9,10),(10,11),(11,12),   # 중지
+    (0,13),(13,14),(14,15),(15,16), # 약지
+    (0,17),(17,18),(18,19),(19,20), # 소지
+    (5,9),(9,13),(13,17),           # 손바닥 가로
+]
+
+
+def _draw_hand_skeleton(frame: np.ndarray, hand) -> np.ndarray:
+    """손 뼈대를 간단한 막대(stick)로 표시"""
+    if hand is None or hand.landmarks is None:
+        return frame
+    h, w = frame.shape[:2]
+    lms = hand.landmarks
+
+    def px(lm):
+        return int(lm.x * w), int(lm.y * h)
+
+    # 색상: 왼손=초록, 오른손=파랑
+    color = (80, 220, 80) if hand.handedness == "Left" else (255, 160, 80)
+    joint_color = (255, 255, 255)
+
+    # 뼈대 연결선
+    for a, b in _HAND_CONNECTIONS:
+        if a < len(lms) and b < len(lms):
+            cv2.line(frame, px(lms[a]), px(lms[b]), color, 2, cv2.LINE_AA)
+
+    # 관절 점
+    for i, lm in enumerate(lms):
+        p = px(lm)
+        r = 5 if i in (4, 8, 12, 16, 20) else 3  # 손끝은 더 크게
+        cv2.circle(frame, p, r, joint_color, -1, cv2.LINE_AA)
+        cv2.circle(frame, p, r, color, 1, cv2.LINE_AA)
+
+    # 제스처 라벨
+    g_label = GESTURE_LABELS.get(hand.gesture, "--")
+    wrist = px(lms[0])
+    cv2.putText(frame, f"{hand.handedness}:{g_label}",
+                (wrist[0] - 10, wrist[1] + 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+
+    return frame
 
 
 # ── 메인 루프 ─────────────────────────────────────────────────────
@@ -231,6 +340,15 @@ def run(model_size: str = "base", voice_enabled: bool = True):
     config = load_config()
     screen_w, screen_h = _get_screen_size(config)
     print(f"[Unified] 화면 해상도: {screen_w}x{screen_h}")
+
+    # ── Ctrl+C 시그널 핸들링 ──────────────────────────────────────
+    _shutdown = threading.Event()
+
+    def _sigint_handler(sig, frame_):
+        print("\n[Unified] Ctrl+C 감지 — 종료합니다...")
+        _shutdown.set()
+
+    signal.signal(signal.SIGINT, _sigint_handler)
 
     # ── NSApplication 초기화 ─────────────────────────────────────
     try:
@@ -276,19 +394,24 @@ def run(model_size: str = "base", voice_enabled: bool = True):
     # ── 음성 ─────────────────────────────────────────────────────
     audio_cap    = None
     transcriber  = None
-    ai_processor = None
+    gemini_agent = None
     if voice_enabled:
         try:
             audio_cap   = AudioCapture()
             transcriber = WhisperTranscriber(model_size=model_size)
-            if _AI_AVAILABLE:
-                ai_processor = CommandProcessor()
-                print("[AI] Claude 연결 완료")
         except Exception as e:
             print(f"[WARN] 음성 모듈 초기화 실패: {e}")
             voice_enabled = False
 
-    voice_mode    = MODE_DICTATE
+    # ── Gemini AI 에이전트 ─────────────────────────────────────
+    if _gemini_ok:
+        try:
+            gemini_agent = GeminiAgent()
+            print("[GeminiAgent] ✨ Gemini 3 에이전트 준비 완료")
+        except Exception as e:
+            print(f"[WARN] Gemini 초기화 실패: {e}")
+            gemini_agent = None
+
     voice_status  = ""
     transcription = ""
     event_log: list = []
@@ -326,23 +449,39 @@ def run(model_size: str = "base", voice_enabled: bool = True):
     zoom_active = False
     zoom_delta  = 0.0
 
+    # 기본 음성 모드: Gemini 있으면 SMART, 없으면 DICTATE
+    voice_mode = MODE_SMART if gemini_agent else MODE_DICTATE
+
     print("\n" + "=" * 60)
     print("  OpenPilot — Step 4  Unified Pilot Agent")
     print("=" * 60)
     print("  👁  Eye    → Mouse cursor movement")
     print("  ✋ Hand   → Click / Scroll / Zoom / Close window")
-    print("  🎙  Voice  → Text input / AI commands  (SPACE)")
+    print("  🎙  Voice  → SMART voice control  (SPACE)")
+    print()
+    print("  Voice Modes (TAB to switch):")
+    print("    DICTATE — 말한 내용 그대로 텍스트 입력")
+    gemini_s = "✅" if gemini_agent else "❌ (python main.py --setup)"
+    print(f"    SMART   — 로컬 매칭 + ✨ Gemini 3 AI 폴백 {gemini_s}")
+    print()
+    print("  SMART 파이프라인:")
+    print("    음성 → Whisper → 로컬 키워드 매칭 (50+ 명령, 즉시 실행)")
+    print("                      └─ 실패 시 → ✨ Gemini 3 (자연어 이해)")
+    print()
+    print("  로컬 명령 예시: 크롬 열어 / 볼륨 업 / 스크린샷 / 닫기")
+    print("  AI 명령 예시:   오늘 날씨 / 구글 검색 / 이메일 보내줘")
     print()
     print("  d        → Toggle debug view (Eye / Hand / Off)")
     print("  c        → Eye calibration")
     print("  r        → Reset gaze smoothing")
     print("  SPACE    → Voice recording toggle")
-    print("  TAB      → Switch DICTATE ↔ AI CMD mode")
+    print("  TAB      → Switch voice mode (SMART ↔ DICTATE)")
     print("  m        → Toggle mouse control")
+    print("  Ctrl+C   → Quit")
     print("  q / ESC  → Quit")
     print("=" * 60 + "\n")
 
-    while True:
+    while not _shutdown.is_set():
         frame = camera.read()
         if frame is None:
             continue
@@ -479,7 +618,11 @@ def run(model_size: str = "base", voice_enabled: bool = True):
                 cv2.line(debug_frame, lp, rp, c, 2, cv2.LINE_AA)
             preview = cv2.resize(debug_frame, (PREVIEW_W, PREVIEW_H))
         else:
-            preview = cv2.resize(frame, (PREVIEW_W, PREVIEW_H))
+            # 디버그 OFF 시에도 손 스켈레톤 기본 표시
+            base_frame = frame.copy()
+            for h in hands:
+                base_frame = _draw_hand_skeleton(base_frame, h)
+            preview = cv2.resize(base_frame, (PREVIEW_W, PREVIEW_H))
 
         preview = draw_hud(
             preview, eye_detected, mouse_on, gaze_estimator.is_calibrated,
@@ -529,21 +672,20 @@ def run(model_size: str = "base", voice_enabled: bool = True):
                 else:
                     voice_busy = True
                     _TranscribeWorker(
-                        audio, transcriber, voice_mode, ai_processor,
+                        audio, transcriber, voice_mode, gemini_agent,
                         event_log, on_transcribe_done,
                     ).start()
 
         elif key == 9 and audio_cap:   # TAB
             if not audio_cap.is_recording and not voice_busy:
-                if voice_mode == MODE_DICTATE:
-                    if ai_processor:
-                        voice_mode   = MODE_AI_CMD
-                        voice_status = "AI CMD mode."
-                    else:
-                        voice_status = "AI unavailable (set ANTHROPIC_API_KEY)."
-                else:
+                # 2모드 토글: SMART ↔ DICTATE
+                if voice_mode == MODE_SMART:
                     voice_mode   = MODE_DICTATE
-                    voice_status = "DICTATE mode."
+                    voice_status = "DICTATE mode. (텍스트 입력)"
+                else:
+                    voice_mode   = MODE_SMART
+                    voice_status = "SMART mode. (로컬 + 🦞 Gemini 3)"
+                print(f"[Unified] 음성 모드: {voice_mode}")
 
     # ── 종료 ─────────────────────────────────────────────────────
     scroll_ctrl.stop_inertia()
