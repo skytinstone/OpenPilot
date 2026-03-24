@@ -28,6 +28,11 @@ env/
 *.swp
 *.swo
 
+# API 키 / 시크릿
+config/api_keys.json
+.env
+.env.*
+
 # 로그 / 임시파일
 *.log
 *.tmp
