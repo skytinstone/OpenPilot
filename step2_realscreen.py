@@ -174,7 +174,7 @@ def run(debug: bool = False):
     event_msg    = EventMessage()
 
     # ── 오버레이 (메인 스레드) ────────────────────────────────────
-    border_overlay  = ScreenBorderOverlayV2(border_width=5)
+    border_overlay  = ScreenBorderOverlayV2(border_width=5, mode="real")
     border_overlay.start()
 
     gesture_overlay = GestureStatusOverlay()

@@ -1,12 +1,18 @@
 """
 손 추적 모듈 — MediaPipe HandLandmarker (Tasks API v0.10+)
 
-21개 랜드마크로 손 제스처를 분류:
+21개 3D 랜드마크로 손 제스처를 분류:
   PALM        — 손바닥 펼침 (트래킹 활성 상태)
   PINCH_INDEX — 엄지 + 검지 핀치 → 좌클릭
   PINCH_MIDDLE— 엄지 + 중지 핀치 → 우클릭
   FIST        — 주먹 → 스크롤
   NONE        — 감지 없음
+
+v2 개선 사항:
+  - 3D 벡터 내적 각도 기반 손가락 판정 (2D y좌표 비교 제거)
+  - Schmitt Trigger 히스테리시스 → 경계값 깜빡임 제거
+  - 3D 유클리디안 핀치 거리 + palm_size 정규화
+  - Handedness Majority Vote 안정화
 
 특수 제스처 감지기:
   PalmRubDetector — 양 손바닥을 맞댄 채 문지르기 → 창 닫기
@@ -19,6 +25,12 @@ import urllib.request
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Optional, List, Tuple
+
+from .hand_kinematics import (
+    classify_hand_gesture_3d,
+    HandednessStabilizer,
+    KinematicsClassifier,
+)
 
 # ── 모델 자동 다운로드 ───────────────────────────────────────────
 _MODEL_URL = (
@@ -137,6 +149,21 @@ def _classify_gesture(lms, handedness: str) -> tuple:
     return HandGesture.NONE, d_index, d_middle
 
 
+# ── 제스처 문자열 → enum 변환 (3D kinematics 출력 연결) ──────────
+
+_GESTURE_MAP = {
+    "PINCH_INDEX":  HandGesture.PINCH_INDEX,
+    "PINCH_MIDDLE": HandGesture.PINCH_MIDDLE,
+    "FIST":         HandGesture.FIST,
+    "PALM":         HandGesture.PALM,
+    "NONE":         HandGesture.NONE,
+}
+
+
+def _str_to_gesture(s: str) -> HandGesture:
+    return _GESTURE_MAP.get(s, HandGesture.NONE)
+
+
 # ── HandTracker 클래스 ───────────────────────────────────────────
 
 class HandTracker:
@@ -158,7 +185,8 @@ class HandTracker:
         )
         self._landmarker = mp_vision.HandLandmarker.create_from_options(options)
         self._mp = mp
-        print("[HandTracker] MediaPipe HandLandmarker 초기화 완료")
+        self._handedness_stab = HandednessStabilizer(window=7)
+        print("[HandTracker] MediaPipe HandLandmarker 초기화 완료 (3D Kinematics v2)")
 
     def process(self, frame: np.ndarray) -> Optional[HandData]:
         """BGR 프레임 → HandData 반환 (손 미감지 시 None)"""
@@ -172,12 +200,19 @@ class HandTracker:
             return None
 
         lms = result.hand_landmarks[0]
-        handedness = (
+        raw_hand = (
             result.handedness[0][0].display_name
             if result.handedness else "Right"
         )
 
-        gesture, d_idx, d_mid = _classify_gesture(lms, handedness)
+        # Handedness 안정화 (Majority Vote)
+        handedness = self._handedness_stab.stabilize(0, raw_hand)
+
+        # 3D Kinematics 기반 제스처 분류
+        gesture_str, d_idx, d_mid, _ = classify_hand_gesture_3d(
+            lms, hand_idx=0, raw_handedness=handedness,
+        )
+        gesture = _str_to_gesture(gesture_str)
 
         # 손 중심: 손목 + 중지 MCP 평균
         cx = (lms[WRIST].x + lms[MIDDLE_MCP].x) / 2
@@ -208,11 +243,19 @@ class HandTracker:
 
         hands: List[HandData] = []
         for i, lms in enumerate(result.hand_landmarks):
-            handedness = (
+            raw_hand = (
                 result.handedness[i][0].display_name
                 if result.handedness else "Right"
             )
-            gesture, d_idx, d_mid = _classify_gesture(lms, handedness)
+            # Handedness 안정화
+            handedness = self._handedness_stab.stabilize(i, raw_hand)
+
+            # 3D Kinematics 기반 제스처 분류
+            gesture_str, d_idx, d_mid, _ = classify_hand_gesture_3d(
+                lms, hand_idx=i, raw_handedness=handedness,
+            )
+            gesture = _str_to_gesture(gesture_str)
+
             cx = (lms[WRIST].x + lms[MIDDLE_MCP].x) / 2
             cy = (lms[WRIST].y + lms[MIDDLE_MCP].y) / 2
             hands.append(HandData(

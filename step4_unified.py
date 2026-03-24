@@ -424,7 +424,7 @@ def run(model_size: str = "base", voice_enabled: bool = True):
         voice_busy    = False
 
     # ── 오버레이 (메인 스레드에서 생성) ──────────────────────────
-    border_overlay  = ScreenBorderOverlayV2(border_width=5)
+    border_overlay  = ScreenBorderOverlayV2(border_width=5, mode="real")
     border_overlay.start()
 
     gesture_overlay = GestureStatusOverlay()

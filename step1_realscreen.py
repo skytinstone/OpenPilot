@@ -5,11 +5,11 @@ Step 1 — Real Screen Eye Tracking
 
 카메라 테스트 창 대신 실제 데스크톱 화면에서 동작:
   - 시선 커서가 실제 화면 위에 투명 오버레이로 표시됩니다
-  - 캘리브레이션이 실제 화면 전체에 오버레이로 표시됩니다
+  - 캘리브레이션: OpenCV 전체 화면 창으로 포인트 표시
   - 작은 카메라 미리보기 창은 상태 확인 및 키 입력용으로만 사용됩니다
 
 조작 키:
-  c       — 캘리브레이션 시작 (실제 화면에 포인트 표시)
+  c       — 캘리브레이션 시작 (전체 화면)
   r       — 스무딩 초기화
   d       — 눈 추적 디버그 시각화 토글 (미리보기 창)
   m       — 마우스 커서 이동 ON/OFF
@@ -17,6 +17,7 @@ Step 1 — Real Screen Eye Tracking
 """
 import cv2
 import numpy as np
+import math
 import time
 import sys
 import os
@@ -30,11 +31,207 @@ from core.vision.eye_tracker import EyeTracker
 from core.vision.gaze_estimator import GazeEstimator
 from feedback.screen_overlay import ScreenBorderOverlayV2
 from feedback.gaze_cursor_overlay import GazeCursorOverlay
-from feedback.calibration_screen_overlay import CalibrationScreenOverlay
 
 # 카메라 미리보기 크기 (키 입력 + 상태 확인용 작은 창)
 PREVIEW_W = 480
 PREVIEW_H = 270
+
+# 캘리브레이션 전체 화면 창 이름
+CAL_WIN = "OpenPilot — Calibration"
+
+
+# ── OpenCV 전체 화면 캘리브레이션 렌더러 ──────────────────────
+
+def draw_calibration_frame(sw: int, sh: int, status: dict) -> np.ndarray:
+    """
+    캘리브레이션 상태 → 전체 화면 프레임 (OpenCV BGR).
+    NSWindow 대신 OpenCV fullscreen 창에 표시.
+    """
+    frame = np.zeros((sh, sw, 3), dtype=np.uint8)
+    phase = status.get("phase", "prepare")
+
+    if phase == "prepare":
+        _draw_prepare(frame, sw, sh, status)
+        return frame
+
+    if phase == "result":
+        _draw_result(frame, sw, sh, status)
+        return frame
+
+    # 포인트 좌표
+    tx = int(status.get("target_x", 0.5) * sw)
+    ty = int(status.get("target_y", 0.5) * sh)
+    progress     = status.get("progress", 0.0)
+    is_stable    = status.get("is_stable", False)
+    is_done      = (phase == "done_pt")
+    is_val       = status.get("is_validation", False)
+    idx          = status.get("current_idx", 0)
+    total        = status.get("total", 9)
+    stable_secs  = status.get("stable_seconds", 0.0)
+    stable_req   = status.get("stable_required", 3.0)
+    qualities    = status.get("point_qualities", [])
+    confirm_time = status.get("confirm_time", 0.0)
+
+    # 색상
+    if is_val:
+        color = (255, 150, 50)     # 파랑 (검증)
+    elif is_done:
+        color = (60, 255, 120)     # 초록 (완료)
+    elif is_stable:
+        color = (60, 255, 120)     # 초록 (안정)
+    else:
+        color = (255, 255, 255)    # 흰색 (대기)
+
+    r_outer = 34 if not is_done else 22
+
+    # ── 외곽 원 ──────────────────────────────────
+    cv2.circle(frame, (tx, ty), r_outer, (40, 40, 40), -1, cv2.LINE_AA)
+    cv2.circle(frame, (tx, ty), r_outer, color, 2, cv2.LINE_AA)
+
+    # ── 진행 호 (arc) ────────────────────────────
+    if progress > 0.01 and not is_val:
+        end_angle = int(360 * progress)
+        cv2.ellipse(frame, (tx, ty), (r_outer - 5, r_outer - 5),
+                    -90, 0, end_angle, color, 6, cv2.LINE_AA)
+
+    # ── 중앙 점 ──────────────────────────────────
+    dot_r = 5 if not is_done else 3
+    cv2.circle(frame, (tx, ty), dot_r, color, -1, cv2.LINE_AA)
+
+    # ── done_pt: 체크마크 + 리플 ─────────────────
+    if is_done and confirm_time > 0:
+        elapsed = time.time() - confirm_time
+
+        # 리플 링 (3개)
+        for i in range(3):
+            t = elapsed - i * 0.15
+            if 0 < t < 0.9:
+                frac = t / 0.9
+                ring_r = int(34 + frac * 80)
+                alpha = 1.0 - frac
+                c = tuple(int(v * alpha) for v in color)
+                cv2.circle(frame, (tx, ty), ring_r, c, 2, cv2.LINE_AA)
+
+        # 체크마크 ✓
+        if elapsed < 0.15:
+            scale = elapsed / 0.15 * 1.3
+        elif elapsed < 0.35:
+            scale = 1.3 - (elapsed - 0.15) / 0.2 * 0.3
+        else:
+            scale = 1.0
+
+        if scale > 0.05:
+            sz = int(22 * scale)
+            pts = np.array([
+                [tx - int(sz * 0.55), ty],
+                [tx - int(sz * 0.1),  ty + int(sz * 0.5)],
+                [tx + int(sz * 0.6),  ty - int(sz * 0.55)],
+            ], dtype=np.int32)
+            cv2.polylines(frame, [pts], False, (60, 255, 120),
+                          max(2, int(3.5 * scale)), cv2.LINE_AA)
+
+        # 품질 별
+        if elapsed > 0.2 and qualities:
+            q = qualities[-1]
+            stars = "***" if q > 0.7 else "**" if q > 0.4 else "*"
+            cv2.putText(frame, stars, (tx - 15, ty + 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 220, 255), 2)
+
+    # ── 안정 표시 (포인트 위) ────────────────────
+    if not is_val and not is_done:
+        if is_stable:
+            label = f"STABLE  {stable_secs:.1f}s / {stable_req:.0f}s"
+            lc = (60, 255, 120)
+        else:
+            label = "Look here and hold still..."
+            lc = (180, 180, 180)
+        (tw, _), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.putText(frame, label, (tx - tw // 2, ty - r_outer - 12),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, lc, 1, cv2.LINE_AA)
+
+    # ── 하단 안내 텍스트 ─────────────────────────
+    if is_val:
+        msg = f"Validation {idx - total + 1} / 4"
+    elif is_done:
+        msg = f"Point {idx + 1} / {total} complete!"
+    else:
+        msg = f"Point {idx + 1} / {total}  —  Gaze at the dot and hold still"
+    (tw, _), _ = cv2.getTextSize(msg, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+    cv2.putText(frame, msg, ((sw - tw) // 2, sh - 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (220, 220, 220), 2, cv2.LINE_AA)
+
+    # ── 포인트 품질 히스토리 바 ───────────────────
+    if qualities:
+        bw, gap = 24, 6
+        total_w = len(qualities) * (bw + gap)
+        start_x = (sw - total_w) // 2
+        for i, q in enumerate(qualities):
+            bx = start_x + i * (bw + gap)
+            c = (60, 255, 120) if q > 0.7 else (60, 220, 255) if q > 0.4 else (60, 60, 255)
+            filled = max(4, int(18 * q))
+            cv2.rectangle(frame, (bx, sh - 22), (bx + bw, sh - 22 + filled), c, -1)
+            cv2.rectangle(frame, (bx, sh - 22), (bx + bw, sh - 4), (80, 80, 80), 1)
+
+    return frame
+
+
+def _draw_prepare(frame, sw, sh, status):
+    """준비 화면"""
+    total = status.get("total", 9)
+    lines = [
+        ("Eye Calibration", 1.0, (255, 255, 255)),
+        ("", 0, None),
+        (f"{total}-Point Calibration", 0.7, (200, 220, 255)),
+        ("Look at each dot and hold still for 3 seconds.", 0.55, (180, 180, 180)),
+        ("Keep your head still — only move your eyes.", 0.55, (180, 180, 180)),
+        ("", 0, None),
+        ("Starting in a moment...", 0.5, (120, 230, 120)),
+    ]
+    y = sh // 2 - len(lines) * 20
+    for text, scale, color in lines:
+        if not text:
+            y += 15
+            continue
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+        cv2.putText(frame, text, ((sw - tw) // 2, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2, cv2.LINE_AA)
+        y += th + 18
+
+
+def _draw_result(frame, sw, sh, status):
+    """결과 화면"""
+    acc = status.get("accuracy_px", -1)
+    qualities = status.get("point_qualities", [])
+    if acc > 0:
+        if acc < 50:
+            grade, gc = "Excellent!", (60, 255, 120)
+        elif acc < 100:
+            grade, gc = "Good", (60, 220, 255)
+        else:
+            grade, gc = "Fair — press c to retry", (60, 60, 255)
+        acc_str = f"{acc:.0f} px"
+    else:
+        acc_str, gc, grade = "--", (180, 180, 180), ""
+
+    avg_q = sum(qualities) / len(qualities) if qualities else 0
+
+    lines = [
+        ("Calibration Complete!", 1.0, (255, 255, 255)),
+        ("", 0, None),
+        (f"Accuracy: {acc_str}  {grade}", 0.7, gc),
+        (f"Avg Quality: {avg_q:.0%}", 0.6, (200, 200, 255)),
+        ("", 0, None),
+        ("Calibration saved. Press c to recalibrate.", 0.5, (120, 120, 120)),
+    ]
+    y = sh // 2 - 80
+    for text, scale, color in lines:
+        if not text:
+            y += 15
+            continue
+        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 2)
+        cv2.putText(frame, text, ((sw - tw) // 2, y),
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2, cv2.LINE_AA)
+        y += th + 18
 
 
 def get_screen_size(config: dict = None):
@@ -107,14 +304,14 @@ def run():
     gaze_estimator = GazeEstimator(screen_w, screen_h, config)
 
     # ── 오버레이들 (메인 스레드에서 생성) ───────────────────────
-    border_overlay = ScreenBorderOverlayV2(border_width=5)
+    border_overlay = ScreenBorderOverlayV2(border_width=5, mode="real")
     border_overlay.start()
 
     gaze_cursor = GazeCursorOverlay()
     gaze_cursor.start()
 
-    cal_overlay = CalibrationScreenOverlay()
-    cal_overlay.start()
+    # v3.2: OpenCV 전체 화면 캘리브레이션 창 (NSWindow 대신 — 확실히 작동)
+    cal_win_created = False
 
     # ── 마우스 컨트롤러 ─────────────────────────────────────────
     mouse         = None
@@ -147,6 +344,12 @@ def run():
     print("  ★ Calibration points will appear on your actual screen.")
     print()
 
+    # ── 항상 캘리브레이션부터 시작 ──────────────────────────────
+    print("[Info] 9-Point 캘리브레이션 시작!")
+    print("[Info] 전체 화면에 포인트가 표시됩니다. 각 점을 3초간 응시하세요.")
+    mouse_enabled = False
+    gaze_estimator.start_calibration(n_points=9)
+
     while True:
         frame = camera.read()
         if frame is None:
@@ -177,9 +380,22 @@ def run():
                 elif cal_pt:
                     cal_status["target_x"] = cal_pt.screen_x
                     cal_status["target_y"] = cal_pt.screen_y
-                cal_overlay.update_from_status(cal_status)
+
+                # v3.2: OpenCV 전체 화면 캘리브레이션 렌더링
+                if not cal_win_created:
+                    cv2.namedWindow(CAL_WIN, cv2.WINDOW_NORMAL)
+                    cv2.setWindowProperty(CAL_WIN, cv2.WND_PROP_FULLSCREEN,
+                                          cv2.WINDOW_FULLSCREEN)
+                    cal_win_created = True
+
+                cal_frame = draw_calibration_frame(screen_w, screen_h, cal_status)
+                cv2.imshow(CAL_WIN, cal_frame)
+
                 if cal_status["done"]:
-                    cal_overlay.hide()
+                    cv2.destroyWindow(CAL_WIN)
+                    cal_win_created = False
+                    mouse_enabled = True
+                    print("[Info] 캘리브레이션 완료 — 마우스 제어 복원")
             else:
                 gaze_point = gaze_estimator.estimate(eye_data)
                 if gaze_point:
@@ -214,11 +430,14 @@ def run():
         key = cv2.waitKey(1) & 0xFF
 
         # ── 키 입력 ───────────────────────────────────────────
+        # 마우스 이동으로 OpenCV 창 포커스가 빠질 수 있으므로
+        # 캘리브레이션 시작 시 마우스 제어를 일시 정지
         if key in (ord('q'), 27):
             break
         elif key == ord('c'):
+            mouse_enabled = False
             gaze_estimator.start_calibration(n_points=9)
-            print("[Info] 9-Point 캘리브레이션 시작 — 실제 화면에 포인트가 표시됩니다")
+            print("[Info] 9-Point 캘리브레이션 시작 — 전체 화면에 포인트 표시")
         elif key == ord('r'):
             gaze_estimator.reset()
             print("[Info] 스무딩 초기화")
@@ -236,7 +455,8 @@ def run():
             print(f"[Info] Mouse: {'ON' if mouse_enabled else 'OFF'}")
 
     # ── 종료 ─────────────────────────────────────────────────────
-    cal_overlay.stop()
+    if cal_win_created:
+        cv2.destroyWindow(CAL_WIN)
     gaze_cursor.stop()
     border_overlay.stop()
     camera.stop()

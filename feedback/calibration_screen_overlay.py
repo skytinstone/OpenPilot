@@ -532,12 +532,14 @@ class CalibrationScreenOverlay:
             )
             self._window.setOpaque_(False)
             self._window.setBackgroundColor_(NSColor.clearColor())
-            self._window.setLevel_(1000)
+            # CGShieldingWindowLevel (2147483630) 바로 아래 — 모든 창 위에 표시
+            self._window.setLevel_(2147483630)
             self._window.setIgnoresMouseEvents_(True)
             self._window.setCollectionBehavior_(
                 NSWindowCollectionBehaviorCanJoinAllSpaces |
                 NSWindowCollectionBehaviorStationary
             )
+            self._window.setHidesOnDeactivate_(False)  # 앱 비활성화 시에도 유지
             self._view = ViewClass.alloc().initWithFrame_(screen_frame)
             self._window.setContentView_(self._view)
             self._window.orderOut_(None)
@@ -588,7 +590,7 @@ class CalibrationScreenOverlay:
         _cal_state.update(data)
         if self._window and self._active:
             try:
-                self._window.makeKeyAndOrderFront_(None)
+                self._window.orderFrontRegardless_()
                 self._view.setNeedsDisplay_(True)
             except Exception:
                 pass
@@ -604,7 +606,7 @@ class CalibrationScreenOverlay:
         _cal_state.update(data)
         if self._window and self._active:
             try:
-                self._window.makeKeyAndOrderFront_(None)
+                self._window.orderFrontRegardless_()
                 self._view.setNeedsDisplay_(True)
             except Exception:
                 pass

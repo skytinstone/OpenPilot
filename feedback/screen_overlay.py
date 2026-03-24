@@ -60,16 +60,39 @@ def _make_border_view_class():
 
 class ScreenBorderOverlayV2:
     """
-    화면 전체를 덮는 투명 오버레이 창 — 테두리만 빨간색으로 표시
+    화면 전체를 덮는 투명 오버레이 창 — 테두리 색상으로 모드 구분
+
+    모드별 색상:
+      - Test Mode (기본): 빨간색 (1.0, 0.15, 0.15)
+      - Real Mode:        초록색 (0.15, 0.85, 0.3)
 
     주의: start() 는 메인 스레드에서 호출해야 합니다.
     NSApplication.sharedApplication() 은 호출 전에 이미 처리되어 있어야 합니다.
     """
 
-    def __init__(self, border_width: int = 5):
+    # 프리셋 색상
+    COLOR_TEST = (1.0, 0.15, 0.15)   # 빨간색 — Test Mode
+    COLOR_REAL = (0.15, 0.85, 0.3)   # 초록색 — Real Mode
+
+    def __init__(self, border_width: int = 5,
+                 color: tuple = None,
+                 mode: str = "test"):
+        """
+        Args:
+            border_width: 테두리 두께 (px)
+            color:        직접 RGB 튜플 지정 (0.0~1.0)
+            mode:         "test" (빨강) / "real" (초록)
+        """
         self._border_width = border_width
-        self._border_color = (1.0, 0.15, 0.15)
+        if color is not None:
+            self._border_color = color
+        elif mode == "real":
+            self._border_color = self.COLOR_REAL
+        else:
+            self._border_color = self.COLOR_TEST
+        self._mode = mode
         self._window = None
+        self._view = None
         self._active = False
 
     def start(self):
@@ -110,10 +133,12 @@ class ScreenBorderOverlayV2:
             view = BorderViewClass.alloc().initWithFrame_(screen_frame)
             view.set_params(self._border_width, self._border_color, sw, sh)
             self._window.setContentView_(view)
+            self._view = view
             self._window.makeKeyAndOrderFront_(None)
 
             self._active = True
-            print("[ScreenOverlay] 빨간 테두리 오버레이 시작")
+            label = "초록" if self._mode == "real" else "빨간"
+            print(f"[ScreenOverlay] {label} 테두리 오버레이 시작 ({self._mode} mode)")
 
         except ImportError:
             print("[ScreenOverlay] PyObjC 미설치. 테두리 오버레이를 건너뜁니다.")
@@ -128,4 +153,4 @@ class ScreenBorderOverlayV2:
             except Exception:
                 pass
         self._active = False
-        print("[ScreenOverlay] 빨간 테두리 오버레이 종료")
+        print("[ScreenOverlay] 테두리 오버레이 종료")

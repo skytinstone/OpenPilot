@@ -238,7 +238,7 @@ def run(model_size: str = "base"):
             print(f"[AI] 연결 실패: {e}")
 
     # ── 오버레이 (메인 스레드에서 생성) ──────────────────────────
-    border_overlay = ScreenBorderOverlayV2(border_width=5)
+    border_overlay = ScreenBorderOverlayV2(border_width=5, mode="real")
     border_overlay.start()
 
     voice_overlay = VoiceOverlay()
